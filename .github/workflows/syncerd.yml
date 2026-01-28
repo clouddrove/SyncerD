@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Allow manual triggering
   push:
     branches:
-      - main
+      - master
     paths:
       - 'syncerd.yaml'
       - '.github/workflows/syncerd.yml'
