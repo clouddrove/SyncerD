@@ -1,0 +1,97 @@
+name: SyncerD
+
+on:
+  schedule:
+    # Run every 3 weeks (21 days) at midnight UTC
+    - cron: '0 0 */21 * *'
+  workflow_dispatch: # Allow manual triggering
+  push:
+    branches:
+      - main
+    paths:
+      - 'syncerd.yaml'
+      - '.github/workflows/syncerd.yml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Build syncerd
+        run: |
+          go build -o syncerd ./main.go
+
+      # IMPORTANT: SyncerD uses docker credential config for destination registry auth.
+      # Add the login steps you need (examples below).
+
+      - name: Login to GHCR (example)
+        if: ${{ secrets.GITHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials (ECR example)
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Login to Amazon ECR (example)
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Azure login (ACR example)
+        if: ${{ secrets.AZURE_CREDENTIALS != '' }}
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Azure Container Registry (example)
+        if: ${{ secrets.ACR_LOGIN_SERVER != '' && secrets.ACR_USERNAME != '' && secrets.ACR_PASSWORD != '' }}
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Authenticate to Google Cloud (GCR example)
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud (GCR example)
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR (example)
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          gcloud auth configure-docker -q
+
+      - name: Run syncerd
+        env:
+          SYNCERD_SOURCE_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SYNCERD_SOURCE_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          SYNCERD_SOURCE_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          SYNCERD_STATE_PATH: .syncerd-state.json
+          SYNCERD_SLACK_WEBHOOK_URL: ${{ secrets.SYNCERD_SLACK_WEBHOOK_URL }}
+          SYNCERD_SLACK_CHANNEL: ${{ secrets.SYNCERD_SLACK_CHANNEL }}
+        run: |
+          ./syncerd sync --once

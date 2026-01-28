@@ -1,0 +1,28 @@
+name: "SyncerD"
+description: "Your lightweight Docker registry sync engine."
+author: "CloudDrove"
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  config:
+    description: "Path to syncerd.yaml"
+    required: false
+    default: "syncerd.yaml"
+  once:
+    description: "Run once and exit (true/false)"
+    required: false
+    default: "true"
+
+runs:
+  using: "docker"
+  # Marketplace best practice: pin to a major tag (v1).
+  # The release workflow publishes ghcr.io/clouddrove/syncerd:v1.
+  image: "docker://ghcr.io/clouddrove/syncerd:v1"
+  args:
+    - "sync"
+    - "--config"
+    - "${{ inputs.config }}"
+    - "--once"
+    - "${{ inputs.once }}"

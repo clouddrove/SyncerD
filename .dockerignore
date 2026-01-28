@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+syncerd
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+syncerd.yaml
+!syncerd.yaml.example
+.syncerd-state.json
+
+# Documentation
+*.md
+!README.md
+
+# CI/CD
+.github
+
+# Tests
+*_test.go

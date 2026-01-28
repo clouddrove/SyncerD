@@ -1,0 +1,74 @@
+# SyncerD Configuration Example
+# Copy this file to syncerd.yaml and update with your values
+
+source:
+  type: dockerhub
+  registry: docker.io
+  # Optional: Use username/password or token for authentication
+  # username: your-dockerhub-username
+  # password: your-dockerhub-password
+  # token: your-dockerhub-token
+
+destinations:
+  - name: aws-ecr
+    type: ecr
+    registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+    region: us-east-1
+    # NOTE: SyncerD relies on your docker credential config.
+    # In CI, use aws-actions/amazon-ecr-login (or `docker login`) so auth is available.
+
+  - name: azure-acr
+    type: acr
+    registry: myregistry.azurecr.io
+    # In CI, use azure/docker-login (or `docker login`) so auth is available.
+
+  - name: google-gcr
+    type: gcr
+    registry: gcr.io
+    # In CI, use `gcloud auth configure-docker` (or `docker login`) so auth is available.
+
+  - name: github-ghcr
+    type: ghcr
+    registry: ghcr.io
+    # In CI, use docker/login-action to ghcr.io so auth is available.
+
+images:
+  - name: library/nginx
+    tags: []  # Empty means sync all tags if watch_tags is true
+    watch_tags: true  # Monitor for new tags
+
+  - name: library/alpine
+    tags:
+      - latest
+      - 3.18
+      - 3.19
+    watch_tags: false  # Only sync specified tags
+
+  - name: library/redis
+    tags: []  # If watch_tags is false and tags is empty, syncs 'latest' only
+    watch_tags: true
+
+# Cron schedule for automatic syncing (default: every 3 weeks)
+# Format: minute hour day month weekday
+# Examples:
+#   "0 0 */21 * *" - Every 21 days at midnight UTC (every 3 weeks)
+#   "0 0 * * 0"    - Every Sunday at midnight UTC
+#   "0 */6 * * *"  - Every 6 hours
+schedule: "0 0 */21 * *"
+
+# Persistent state file (tracks which tags were already synced)
+state_path: ".syncerd-state.json"
+
+# Slack notifications (optional)
+slack:
+  enabled: false
+  webhook_url: ""
+  channel: ""      # optional, depends on your webhook setup
+  username: "SyncerD"
+  icon_emoji: ":whale:"
+  notify_on_new: true
+  notify_on_error: true
+  message_format: "compact" # "compact" | "detailed"
+
+# Failure behavior
+fail_fast: false # false = best-effort per image/tag; true = stop on first error
