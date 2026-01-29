@@ -1,9 +1,18 @@
-# SyncerD
-
-**Your lightweight Docker registry sync engine.**
-
-[![Go Report Card](https://goreportcard.com/badge/github.com/clouddrove/syncerd)](https://goreportcard.com/report/github.com/clouddrove/syncerd)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <img src="assets/syncerd-logo.png" alt="SyncerD logo" width="300">
+</p>
+<h1 align="center">
+  SyncerD
+</h1>
+<p align="center">Your lightweight Docker registry sync engine.</p>
+<p align="center">
+  <a href="https://goreportcard.com/report/github.com/clouddrove/syncerd">
+    <img src="https://goreportcard.com/badge/github.com/clouddrove/syncerd" alt="Go Report Card">
+  </a>
+  <a href="https://opensource.org/licenses/MIT">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+  </a>
+</p>
 
 SyncerD is a powerful Go tool for synchronizing Docker images from Docker Hub to other container registries (ECR, ACR, GCR, GitHub Container Registry). Automatically monitors for new versions and syncs them on a schedule.
 
