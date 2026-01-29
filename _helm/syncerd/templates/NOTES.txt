@@ -1,0 +1,21 @@
+SyncerD has been installed as a CronJob (stateless by default; no PVC).
+
+  Chart:    {{ .Chart.Name }}-{{ .Chart.Version }}
+  Schedule: {{ .Values.cronjob.schedule }}
+  Image:    {{ .Values.image.repository }}:{{ .Values.image.tag }}
+  State:    {{- if .Values.persistence.enabled }} PVC {{ include "syncerd.fullname" . }}-state {{- else }} ephemeral (emptyDir) {{- end }}
+
+Each run executes: syncerd sync --once
+
+- Config is in ConfigMap {{ include "syncerd.fullname" . }}-config
+{{- if .Values.persistence.enabled }}
+- State is persisted in PVC {{ include "syncerd.fullname" . }}-state
+{{- else }}
+- No PVC: each run is stateless; SyncerD skips tags that already exist in the destination registry.
+{{- end }}
+
+To run a sync manually:
+  kubectl create job --from=cronjob/{{ include "syncerd.fullname" . }} syncerd-manual-$(date +%s) -n {{ .Release.Namespace }}
+
+To watch logs of the last run:
+  kubectl logs -l app.kubernetes.io/name={{ include "syncerd.name" . }} -n {{ .Release.Namespace }} --tail=100

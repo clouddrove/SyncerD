@@ -1,0 +1,5 @@
+# Patterns to ignore when building packages.
+*.swp
+*.swo
+.DS_Store
+ci-values.yaml

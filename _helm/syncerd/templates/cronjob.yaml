@@ -1,0 +1,139 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "syncerd.fullname" . }}
+  labels:
+    {{- include "syncerd.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "syncerd.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: {{ .Values.cronjob.restartPolicy }}
+          {{- with .Values.dockerConfigSecret }}
+          imagePullSecrets:
+            - name: {{ . | quote }}
+          {{- end }}
+          {{- if .Values.serviceAccount.create }}
+          serviceAccountName: {{ include "syncerd.fullname" . }}
+          {{- else if .Values.serviceAccount.name }}
+          serviceAccountName: {{ .Values.serviceAccount.name | quote }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          containers:
+            - name: syncerd
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /app/syncerd
+                - sync
+                - --config
+                - /config/syncerd.yaml
+                - --once
+              env:
+                - name: SYNCERD_STATE_PATH
+                  value: {{ .Values.config.state_path | quote }}
+                {{- if .Values.existingSecret }}
+                - name: SYNCERD_SOURCE_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret | quote }}
+                      key: DOCKERHUB_USERNAME
+                      optional: true
+                - name: SYNCERD_SOURCE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret | quote }}
+                      key: DOCKERHUB_PASSWORD
+                      optional: true
+                - name: SYNCERD_SOURCE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret | quote }}
+                      key: DOCKERHUB_TOKEN
+                      optional: true
+                - name: SYNCERD_SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret | quote }}
+                      key: SYNCERD_SLACK_WEBHOOK_URL
+                      optional: true
+                - name: SYNCERD_SLACK_CHANNEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret | quote }}
+                      key: SYNCERD_SLACK_CHANNEL
+                      optional: true
+                {{- else if or .Values.secret.dockerhubUsername .Values.secret.dockerhubToken .Values.secret.slackWebhookUrl }}
+                - name: SYNCERD_SOURCE_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "syncerd.fullname" . }}-credentials
+                      key: SYNCERD_SOURCE_USERNAME
+                      optional: true
+                - name: SYNCERD_SOURCE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "syncerd.fullname" . }}-credentials
+                      key: SYNCERD_SOURCE_PASSWORD
+                      optional: true
+                - name: SYNCERD_SOURCE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "syncerd.fullname" . }}-credentials
+                      key: SYNCERD_SOURCE_TOKEN
+                      optional: true
+                - name: SYNCERD_SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "syncerd.fullname" . }}-credentials
+                      key: SYNCERD_SLACK_WEBHOOK_URL
+                      optional: true
+                - name: SYNCERD_SLACK_CHANNEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "syncerd.fullname" . }}-credentials
+                      key: SYNCERD_SLACK_CHANNEL
+                      optional: true
+                {{- end }}
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                {{- if .Values.dockerConfigSecret }}
+                - name: docker-config
+                  mountPath: /root/.docker
+                  readOnly: true
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "syncerd.fullname" . }}-config
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "syncerd.fullname" . }}-state
+            {{- else }}
+            - name: data
+              emptyDir: {}
+            {{- end }}
+            {{- if .Values.dockerConfigSecret }}
+            - name: docker-config
+              secret:
+                secretName: {{ .Values.dockerConfigSecret | quote }}
+                items:
+                  - key: .dockerconfigjson
+                    path: config.json
+            {{- end }}
