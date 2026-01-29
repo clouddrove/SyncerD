@@ -56,6 +56,38 @@ Add SyncerD to your workflow:
 Notes:
 - SyncerD reads destination registry auth from **Docker credentials**. In GitHub Actions, run the appropriate login steps (`docker/login-action`, `aws-actions/amazon-ecr-login`, `azure/docker-login`, `gcloud auth configure-docker`) *before* SyncerD.
 
+## Run with Helm (Kubernetes)
+
+Run SyncerD as a **CronJob** on Kubernetes so it syncs on a schedule (e.g. every 3 weeks) with persistent state.
+
+```bash
+# Add the chart (from repo root)
+helm install syncerd ./helm/syncerd -n syncerd --create-namespace
+
+# Or install from a release / OCI
+# helm install syncerd oci://ghcr.io/clouddrove/charts/syncerd -n syncerd --create-namespace
+```
+
+**Configure via values:**
+
+1. Set `config.destinations` and `config.images` in `values.yaml` or `--set`.
+2. Provide credentials:
+   - **Option A**: Create a Secret with `DOCKERHUB_USERNAME`/`DOCKERHUB_PASSWORD` or `DOCKERHUB_TOKEN`, and optional `SYNCERD_SLACK_WEBHOOK_URL`; set `existingSecret: my-secret`.
+   - **Option B**: Use `secret.dockerhubUsername` / `secret.dockerhubPassword` (or `dockerhubToken`) and `secret.slackWebhookUrl` in values (not recommended for production).
+3. For **destination registry auth** (ECR, ACR, GCR, GHCR), create a Docker config secret and set `dockerConfigSecret: my-docker-config`:
+   ```bash
+   kubectl create secret generic syncerd-docker-config --from-file=.dockerconfigjson=$HOME/.docker/config.json --type=kubernetes.io/dockerconfigjson -n syncerd
+   ```
+
+**Stateless vs stateful:** By default the chart is **stateless** (no PVC). Each run checks the destination registry and skips tags that already exist. Set `persistence.enabled: true` to persist state across runs for faster "already synced" checks.
+
+**Manual run:**
+```bash
+kubectl create job --from=cronjob/syncerd-<release> syncerd-manual-$(date +%s) -n syncerd
+```
+
+See [helm/syncerd/README.md](helm/syncerd/README.md) for full chart options.
+
 ## Quick Start
 
 1. **Create a configuration file** (`syncerd.yaml`):
