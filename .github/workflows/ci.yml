@@ -43,7 +43,7 @@ jobs:
 
       - name: Helm lint
         run: |
-          helm lint ._/helm/syncerd
+          helm lint ./_helm/syncerd
 
       - name: Helm template (default values)
         run: |
