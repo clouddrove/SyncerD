@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "syncerd.fullname" . }}-config
+  labels:
+    {{- include "syncerd.labels" . | nindent 4 }}
+data:
+  syncerd.yaml: |
+    source:
+      type: {{ .Values.config.source.type | default "dockerhub" }}
+      registry: {{ .Values.config.source.registry | default "docker.io" }}
+    destinations:
+    {{- range .Values.config.destinations }}
+      - name: {{ .name | quote }}
+        type: {{ .type | quote }}
+        registry: {{ .registry | quote }}
+        {{- if .region }}
+        region: {{ .region | quote }}
+        {{- end }}
+    {{- end }}
+    images:
+    {{- range .Values.config.images }}
+      - name: {{ .name | quote }}
+        {{- if .tags }}
+        tags:
+        {{- range .tags }}
+          - {{ . | quote }}
+        {{- end }}
+        {{- end }}
+        watch_tags: {{ default true .watch_tags }}
+    {{- end }}
+    state_path: {{ .Values.config.state_path | quote }}
+    fail_fast: {{ .Values.config.fail_fast }}
+    slack:
+      enabled: {{ .Values.config.slack.enabled }}
+      notify_on_new: {{ .Values.config.slack.notify_on_new }}
+      notify_on_error: {{ .Values.config.slack.notify_on_error }}
+      message_format: {{ .Values.config.slack.message_format | default "compact" | quote }}

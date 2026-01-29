@@ -1,0 +1,88 @@
+# Default values for syncerd.
+# See README and syncerd.yaml.example for full config reference.
+
+# Image to run
+image:
+  repository: ghcr.io/clouddrove/syncerd
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Kubernetes CronJob schedule (when to run sync). Default: every 3 weeks at midnight UTC
+# https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+cronjob:
+  schedule: "0 0 */21 * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  restartPolicy: OnFailure
+
+# State persistence (default: stateless, no PVC)
+# - enabled: false → stateless; each run checks destination registry and skips existing tags (no PVC)
+# - enabled: true  → persist state across runs for faster "already synced" checks
+persistence:
+  enabled: false
+  size: 1Gi
+  # storageClass: ""  # use cluster default if not set
+
+# SyncerD config (maps to syncerd.yaml)
+# Source: Docker Hub
+config:
+  source:
+    type: dockerhub
+    registry: docker.io
+    # username/password/token: set via secret (see below) or env
+  destinations: []
+  # Example:
+  # destinations:
+  #   - name: my-ecr
+  #     type: ecr
+  #     registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  #     region: us-east-1
+  images: []
+  # Example:
+  # images:
+  #   - name: library/nginx
+  #     watch_tags: true
+  state_path: /data/.syncerd-state.json
+  fail_fast: false
+  slack:
+    enabled: false
+    notify_on_new: true
+    notify_on_error: true
+    message_format: compact
+
+# Optional: use existing Secret for credentials (avoids storing in values)
+# Create a secret with keys: DOCKERHUB_USERNAME, DOCKERHUB_PASSWORD or DOCKERHUB_TOKEN;
+# optional: SYNCERD_SLACK_WEBHOOK_URL, SYNCERD_SLACK_CHANNEL
+existingSecret: ""
+# Or provide inline (not recommended for production - use existingSecret)
+secret:
+  dockerhubUsername: ""
+  dockerhubPassword: ""
+  dockerhubToken: ""
+  slackWebhookUrl: ""
+  slackChannel: ""
+
+# Optional: mount Docker config for destination registry auth (ECR, ACR, GCR, GHCR)
+# Create secret: kubectl create secret generic syncerd-docker-config --from-file=.dockerconfigjson=$HOME/.docker/config.json --type=kubernetes.io/dockerconfigjson
+dockerConfigSecret: ""
+
+# Resource limits for the sync job
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""
