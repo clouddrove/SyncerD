@@ -43,13 +43,13 @@ jobs:
 
       - name: Helm lint
         run: |
-          helm lint ./helm/syncerd
+          helm lint ._/helm/syncerd
 
       - name: Helm template (default values)
         run: |
-          helm template syncerd ./helm/syncerd --debug 2>&1 | head -200
+          helm template syncerd ./_helm/syncerd --debug 2>&1 | head -200
 
       - name: Helm template (with sample config)
         run: |
-          helm template syncerd ./helm/syncerd -f ./helm/syncerd/ci-values.yaml
+          helm template syncerd ./_helm/syncerd -f ./_helm/syncerd/ci-values.yaml
 
