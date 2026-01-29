@@ -1,96 +1,55 @@
 <p align="center">
-  <img src="assets/syncerd-logo.png" alt="SyncerD logo" width="300">
+  <img src="assets/syncerd-logo.png" alt="SyncerD logo" width="280">
 </p>
-<h1 align="center">
-  SyncerD
-</h1>
-<p align="center">Your lightweight Docker registry sync engine.</p>
+
+<h1 align="center">SyncerD</h1>
 <p align="center">
-  <a href="https://goreportcard.com/report/github.com/clouddrove/syncerd">
-    <img src="https://goreportcard.com/badge/github.com/clouddrove/syncerd" alt="Go Report Card">
-  </a>
-  <a href="https://opensource.org/licenses/MIT">
-    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
-  </a>
+  <strong>Your lightweight Docker registry sync engine.</strong>
+</p>
+<p align="center">
+  Sync images from Docker Hub to ECR, ACR, GCR & GHCR — beat rate limits, run anywhere.
 </p>
 
-SyncerD is a powerful Go tool for synchronizing Docker images from Docker Hub to other container registries (ECR, ACR, GCR, GitHub Container Registry). Automatically monitors for new versions and syncs them on a schedule.
+<p align="center">
+  <a href="https://github.com/clouddrove/syncerd"><img src="https://img.shields.io/github/stars/clouddrove/syncerd?style=social" alt="GitHub stars"></a>
+  <a href="https://goreportcard.com/report/github.com/clouddrove/syncerd"><img src="https://goreportcard.com/badge/github.com/clouddrove/syncerd" alt="Go Report Card"></a>
+  <a href="https://github.com/clouddrove/syncerd/releases"><img src="https://img.shields.io/github/v/release/clouddrove/syncerd?include_prereleases" alt="Release"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
-## Features
+---
 
-- 🔄 **Multi-Registry Support**: Sync to AWS ECR, Azure ACR, Google GCR, and GitHub Container Registry
-- 🔍 **Automatic Version Detection**: Monitors Docker Hub for new tags and automatically syncs them
-- ⏰ **Scheduled Syncs**: Built-in cron scheduler (default: every 3 weeks)
-- 🚀 **GitHub Actions Ready**: Use as a GitHub Action for automated syncing
-- 🖥️ **CLI Tool**: Run from terminal for manual or scheduled syncing
-- 🔒 **Secure**: Supports multiple authentication methods for all registries
-- 📝 **Configurable**: YAML-based configuration with environment variable support
+## Why SyncerD?
 
-## Installation
+Docker Hub’s [rate limits](https://docs.docker.com/docker-hub/download-rate-limit/) can block pulls in CI and production. **SyncerD** copies images from Docker Hub to your own registries (AWS ECR, Azure ACR, Google GCR, GitHub Container Registry) so you pull from your registry instead — no rate-limit headaches, same images.
 
-### From Source
+- **One config, many registries** — Sync the same set of images to ECR, ACR, GCR, and GHCR from a single YAML.
+- **Runs everywhere** — CLI, GitHub Actions, Kubernetes (Helm CronJob). Stateless by default; no DB required.
+- **New tags, automatically** — Watches source tags and syncs only what’s missing; optional Slack alerts on new syncs or failures.
+
+---
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Contributing & support](#contributing--support)
+
+---
+
+## Quick start
+
+**1. Install** (binary or Go)
 
 ```bash
-git clone https://github.com/clouddrove/syncerd.git
-cd syncerd
-go build -o syncerd ./main.go
-```
-
-### Using Go Install
-
-```bash
+# Binary (see Releases for your OS)
 go install github.com/clouddrove/syncerd@latest
 ```
 
-## Use as a GitHub Action (Marketplace)
-
-Add SyncerD to your workflow:
-
-```yaml
-- uses: clouddrove/syncerd@v1
-  with:
-    config: syncerd.yaml
-    once: "true"
-```
-
-Notes:
-- SyncerD reads destination registry auth from **Docker credentials**. In GitHub Actions, run the appropriate login steps (`docker/login-action`, `aws-actions/amazon-ecr-login`, `azure/docker-login`, `gcloud auth configure-docker`) *before* SyncerD.
-
-## Run with Helm (Kubernetes)
-
-Run SyncerD as a **CronJob** on Kubernetes so it syncs on a schedule (e.g. every 3 weeks) with persistent state.
-
-```bash
-# Add the chart (from repo root)
-helm install syncerd ./helm/syncerd -n syncerd --create-namespace
-
-# Or install from a release / OCI
-# helm install syncerd oci://ghcr.io/clouddrove/charts/syncerd -n syncerd --create-namespace
-```
-
-**Configure via values:**
-
-1. Set `config.destinations` and `config.images` in `values.yaml` or `--set`.
-2. Provide credentials:
-   - **Option A**: Create a Secret with `DOCKERHUB_USERNAME`/`DOCKERHUB_PASSWORD` or `DOCKERHUB_TOKEN`, and optional `SYNCERD_SLACK_WEBHOOK_URL`; set `existingSecret: my-secret`.
-   - **Option B**: Use `secret.dockerhubUsername` / `secret.dockerhubPassword` (or `dockerhubToken`) and `secret.slackWebhookUrl` in values (not recommended for production).
-3. For **destination registry auth** (ECR, ACR, GCR, GHCR), create a Docker config secret and set `dockerConfigSecret: my-docker-config`:
-   ```bash
-   kubectl create secret generic syncerd-docker-config --from-file=.dockerconfigjson=$HOME/.docker/config.json --type=kubernetes.io/dockerconfigjson -n syncerd
-   ```
-
-**Stateless vs stateful:** By default the chart is **stateless** (no PVC). Each run checks the destination registry and skips tags that already exist. Set `persistence.enabled: true` to persist state across runs for faster "already synced" checks.
-
-**Manual run:**
-```bash
-kubectl create job --from=cronjob/syncerd-<release> syncerd-manual-$(date +%s) -n syncerd
-```
-
-See [helm/syncerd/README.md](helm/syncerd/README.md) for full chart options.
-
-## Quick Start
-
-1. **Create a configuration file** (`syncerd.yaml`):
+**2. Add a config** — e.g. `syncerd.yaml`:
 
 ```yaml
 source:
@@ -108,219 +67,117 @@ images:
     watch_tags: true
 ```
 
-2. **Set up authentication** (via environment variables or config file):
+**3. Run** (use Docker credentials for destinations; [see Auth](#authentication))
 
 ```bash
-export SYNCERD_SOURCE_USERNAME=your-dockerhub-username
-export SYNCERD_SOURCE_PASSWORD=your-dockerhub-password
-```
-
-3. **Run the sync**:
-
-```bash
-# Run once
+export SYNCERD_SOURCE_USERNAME=your-dockerhub-user
+export SYNCERD_SOURCE_PASSWORD=your-dockerhub-token
 ./syncerd sync --once
-
-# Run continuously with cron schedule
-./syncerd sync
 ```
 
-## Configuration
+That’s it. Use the same config in [GitHub Actions](#use-as-a-github-action-marketplace) or [Kubernetes (Helm)](#run-with-helm-kubernetes) for scheduled syncs.
 
-See `syncerd.yaml.example` for a complete configuration example.
+---
 
-### Source Configuration
+## Features
 
-```yaml
-source:
-  type: dockerhub
-  registry: docker.io
-  username: your-username  # Optional
-  password: your-password  # Optional
-  token: your-token        # Optional (preferred)
-```
+| Feature | Description |
+|--------|-------------|
+| **Multi-registry** | Sync to AWS ECR, Azure ACR, Google GCR, GitHub Container Registry |
+| **Auto tag watch** | Detects new tags and syncs only what’s missing (optional persistent state) |
+| **Scheduled runs** | Built-in cron (e.g. every 3 weeks) or use K8s CronJob / GitHub Actions |
+| **GitHub Action** | [Marketplace action](https://github.com/marketplace) — drop into workflows |
+| **Helm chart** | Run as a CronJob on Kubernetes; stateless by default (no PVC) |
+| **Slack** | Optional notifications on new syncs and failures (compact/detailed) |
+| **Secure** | Docker Hub via env/secret; destinations via Docker credential config |
 
-### Destination Configuration
+---
 
-#### AWS ECR
+## Installation
 
-```yaml
-destinations:
-  - name: my-ecr
-    type: ecr
-    registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
-    region: us-east-1
-```
+| Method | Command |
+|--------|---------|
+| **Go install** | `go install github.com/clouddrove/syncerd@latest` |
+| **From source** | `git clone https://github.com/clouddrove/syncerd.git && cd syncerd && go build -o syncerd ./main.go` |
+| **Releases** | Download the [latest release](https://github.com/clouddrove/syncerd/releases) for your OS/arch |
+| **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest syncerd sync --once` (mount config + auth as needed) |
 
-**Authentication**: SyncerD reads destination credentials from your **Docker credential config**
-(what `docker login` writes). In GitHub Actions, use `aws-actions/amazon-ecr-login` (or `docker login`)
-before running SyncerD.
-
-#### Azure ACR
-
-```yaml
-destinations:
-  - name: my-acr
-    type: acr
-    registry: myregistry.azurecr.io
-```
-
-**Authentication**: use `azure/docker-login` (or `docker login`) so credentials are available to SyncerD.
-
-#### Google GCR
-
-```yaml
-destinations:
-  - name: my-gcr
-    type: gcr
-    registry: gcr.io
-```
-
-**Authentication**: use `gcloud auth configure-docker` (or `docker login`) so credentials are available to SyncerD.
-
-#### GitHub Container Registry
-
-```yaml
-destinations:
-  - name: my-ghcr
-    type: ghcr
-    registry: ghcr.io
-```
-
-**Authentication**: use `docker/login-action` to `ghcr.io` (or `docker login`) so credentials are available to SyncerD.
-
-### Image Configuration
-
-```yaml
-images:
-  - name: library/nginx
-    tags: []           # Empty = all tags (if watch_tags is true)
-    watch_tags: true   # Monitor for new tags
-
-  - name: library/alpine
-    tags:              # Specific tags to sync
-      - latest
-      - 3.18
-      - 3.19
-    watch_tags: false  # Only sync specified tags
-```
-
-### Schedule Configuration
-
-```yaml
-# Cron format: minute hour day month weekday
-schedule: "0 0 */21 * *"  # Every 3 weeks at midnight UTC
-```
-
-### State Configuration
-
-```yaml
-# Persistent state file (tracks which tags were already synced)
-state_path: ".syncerd-state.json"
-```
-
-### Slack Notifications (optional)
-
-```yaml
-slack:
-  enabled: true
-  webhook_url: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
-  channel: "#platform-alerts"  # optional
-  notify_on_new: true
-  notify_on_error: true
-  message_format: "compact" # "compact" | "detailed"
-```
-
-### Failure behavior
-
-```yaml
-# false = best-effort per image/tag (default)
-# true  = stop the whole run on first error
-fail_fast: false
-```
+---
 
 ## Usage
 
-### Command Line
+### Use as a GitHub Action (Marketplace)
+
+Add SyncerD to your workflow:
+
+```yaml
+- uses: clouddrove/syncerd@v1
+  with:
+    config: syncerd.yaml
+    once: "true"
+```
+
+Use Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
+
+### Run with Helm (Kubernetes)
+
+Run SyncerD as a **CronJob** (stateless by default; no PVC):
 
 ```bash
-# Run sync once and exit
-syncerd sync --once
+helm install syncerd ./_helm/syncerd -n syncerd --create-namespace
+```
 
-# Run continuously with cron schedule (from config)
-syncerd sync
+- Set `config.destinations` and `config.images` in `values.yaml` or via `--set`.
+- Credentials: use `existingSecret` (recommended) or `secret.*` in values; for destination registries set `dockerConfigSecret` to a Docker config secret.
+- See [_helm/syncerd/README.md](_helm/syncerd/README.md) for all chart options.
 
-# Use custom config file
+### Command line
+
+```bash
+syncerd sync --once                    # Run once and exit
+syncerd sync                           # Run with built-in cron (from config)
 syncerd sync --config /path/to/config.yaml
 ```
 
-### GitHub Actions
+---
 
-See `.github/workflows/syncerd.yml` for an example workflow.
+## Configuration
 
-```yaml
-- name: Run syncerd
-  env:
-    SYNCERD_SOURCE_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-    SYNCERD_SOURCE_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
-  run: |
-    syncerd sync --once
-```
+Full example: [syncerd.yaml.example](syncerd.yaml.example).
 
-### CI & Releases
+| Section | Purpose |
+|---------|---------|
+| `source` | Docker Hub (username/password or token via env or config) |
+| `destinations` | List of registries (ECR, ACR, GCR, GHCR); auth via Docker credential config |
+| `images` | Images to sync; optional `tags`, `watch_tags` for new tag detection |
+| `schedule` | Cron expression when running without `--once` |
+| `state_path` | Optional state file for “already synced” tracking |
+| `slack` | Optional webhook; notify on new syncs and/or failures |
+| `fail_fast` | `true` = stop on first error; `false` = best-effort per image/tag |
 
-- **CI**: `.github/workflows/ci.yml` runs `gofmt`, `go test`, and `go build`.
-- **Go releases**: `.github/workflows/release.yml` uses GoReleaser when you push a `v*` tag.
-- **Docker image**: the same release workflow builds & pushes to `ghcr.io/<org>/syncerd`.
+### Environment variables
 
-## Environment Variables
+Override with `SYNCERD_` prefix:  
+`SYNCERD_SOURCE_USERNAME`, `SYNCERD_SOURCE_PASSWORD`, `SYNCERD_SOURCE_TOKEN`,  
+`SYNCERD_STATE_PATH`, `SYNCERD_SLACK_WEBHOOK_URL`, `SYNCERD_SLACK_CHANNEL`,  
+`SYNCERD_SLACK_MESSAGE_FORMAT`, `SYNCERD_FAIL_FAST`.
 
-All configuration can be overridden via environment variables with the `SYNCERD_` prefix:
+### Authentication
 
-- `SYNCERD_SOURCE_USERNAME`
-- `SYNCERD_SOURCE_PASSWORD`
-- `SYNCERD_SOURCE_TOKEN`
-- `SYNCERD_SCHEDULE`
-- `SYNCERD_STATE_PATH`
-- `SYNCERD_SLACK_WEBHOOK_URL`
-- `SYNCERD_SLACK_CHANNEL`
-- `SYNCERD_SLACK_MESSAGE_FORMAT`
-- `SYNCERD_FAIL_FAST`
+- **Docker Hub (source):** Username/password or Personal Access Token (env or config).
+- **Destinations (ECR/ACR/GCR/GHCR):** SyncerD uses the default Docker keychain — `docker login`, credential helpers, or GitHub Actions login steps.
 
-## Authentication
+---
 
-### Docker Hub
+## Contributing & support
 
-- Username/Password
-- Personal Access Token (recommended)
+- **Bugs & ideas:** [Open an issue](https://github.com/clouddrove/syncerd/issues).
+- **Code:** See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome.
+- **Star the repo** if SyncerD helps you — it helps others discover the project.
 
-### Destination registries (ECR/ACR/GCR/GHCR)
-
-SyncerD uses `authn.DefaultKeychain`, meaning it will pick up credentials from:
-
-- `docker login` (writes `~/.docker/config.json`)
-- Docker credential helpers (osxkeychain, wincred, pass, etc.)
-- GitHub Actions login steps (recommended per registry)
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with [go-containerregistry](https://github.com/google/go-containerregistry)
-- Inspired by the need to work around Docker Hub rate limits
-
-## Support
-
-For issues, questions, or contributions, please open an issue on [GitHub](https://github.com/clouddrove/syncerd/issues).
+[MIT](LICENSE). Built with [go-containerregistry](https://github.com/google/go-containerregistry).  
+Inspired by the need to work around Docker Hub rate limits.
