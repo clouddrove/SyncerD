@@ -15,10 +15,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 type SyncEvent struct {
 	Destination string
 	Image       string
@@ -324,7 +320,7 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 	// Copy image to each destination
 	for i, destReg := range s.destRegistries {
 		destCfg := s.config.Destinations[i]
-		destImageName := s.getDestinationImageName(imageName, destCfg)
+		destImageName := imageName
 		destRef := fmt.Sprintf("%s/%s:%s", destReg.GetRegistryURL(), destImageName, tag)
 
 		if s.state.IsSynced(destCfg.Name, imageName, tag) {
@@ -396,27 +392,6 @@ func (s *Syncer) copyImage(ctx context.Context, sourceRef string, destReg regist
 	}
 
 	return nil
-}
-
-func (s *Syncer) getDestinationImageName(sourceImageName string, destCfg config.DestinationConfig) string {
-	// For now, use the same image name
-	// Could be customized per destination if needed
-	switch destCfg.Type {
-	case "gcr":
-		// GCR might need project prefix, but it's usually in the registry URL
-		return sourceImageName
-	case "acr":
-		// ACR uses the same format
-		return sourceImageName
-	case "ecr":
-		// ECR uses the same format
-		return sourceImageName
-	case "ghcr":
-		// GHCR might need owner prefix
-		return sourceImageName
-	default:
-		return sourceImageName
-	}
 }
 
 func getSourceAuth(cfg *config.Config) authn.Authenticator {

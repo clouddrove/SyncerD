@@ -1,6 +1,6 @@
 module github.com/clouddrove/syncerd
 
-go 1.21
+go 1.23
 
 require (
 	github.com/google/go-containerregistry v0.19.0

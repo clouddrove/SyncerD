@@ -2,12 +2,15 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 // GenericRegistry is a generic OCI registry implementation.
@@ -48,7 +51,11 @@ func (r *GenericRegistry) ImageExists(ctx context.Context, image, tag string) (b
 	}
 	_, err = remote.Head(ref, remote.WithContext(ctx), remote.WithAuthFromKeychain(r.keychain))
 	if err != nil {
-		return false, nil
+		var terr *transport.Error
+		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/viper"
 )
@@ -164,15 +163,4 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
-}
-
-func GetDefaultConfigPath() string {
-	// Check current directory first
-	if _, err := os.Stat("syncerd.yaml"); err == nil {
-		return "syncerd.yaml"
-	}
-	if _, err := os.Stat("syncerd.yml"); err == nil {
-		return "syncerd.yml"
-	}
-	return filepath.Join(".", "syncerd.yaml")
 }

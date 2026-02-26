@@ -36,7 +36,6 @@ It can monitor for new versions and automatically sync them on a schedule.`,
 	var runOnce bool
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./syncerd.yaml)")
-	rootCmd.PersistentFlags().BoolVar(&runOnce, "once", false, "run sync once and exit (default: false, runs continuously with cron)")
 
 	syncCmd := &cobra.Command{
 		Use:   "sync",
@@ -68,6 +67,7 @@ It can monitor for new versions and automatically sync them on a schedule.`,
 		},
 	}
 
+	syncCmd.Flags().BoolVar(&runOnce, "once", false, "run sync once and exit (default: false, runs continuously with cron)")
 	rootCmd.AddCommand(syncCmd)
 
 	if err := rootCmd.Execute(); err != nil {
