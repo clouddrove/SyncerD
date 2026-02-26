@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-02-26
+
+### Fixed
+- Helm: `dockerConfigSecret` was incorrectly used as `imagePullSecrets`; separated into a dedicated `imagePullSecrets` value for pulling the SyncerD image and `dockerConfigSecret` for destination registry auth
+- Helm: set `DOCKER_CONFIG=/root/.docker` when `dockerConfigSecret` is configured so credentials are found when the pod runs as non-root
+- Helm: `state_path` and `SYNCERD_STATE_PATH` are now empty when `persistence.enabled: false`, making stateless mode truly stateless (no file I/O)
+- Helm: removed unused `emptyDir` data volume and mount in stateless mode
+- `DockerHubRegistry.Authenticate` was a no-op; now validates credentials against the Docker Hub API at startup
+- `ListTags` pagination silently swallowed errors and ignored context cancellation; now returns errors and checks `ctx.Err()` between pages; page size increased to 100
+- `ImageExists` masked all errors as image-not-found; now only treats HTTP 404 as not-found and propagates all other errors
+- Removed deprecated `rand.Seed` call (global source is auto-seeded since Go 1.20)
+- Removed dead `getDestinationImageName` no-op switch; removed unused `GetDefaultConfigPath` function
+- `--once` flag moved from root persistent flags to the `sync` subcommand where it belongs
+- `action.yml`: fixed `--once` boolean flag passing to use `--once=<value>` syntax
+- GitHub Actions `syncerd.yml`: removed invalid `secrets` context usage in `if` conditions; replaced with `continue-on-error: true` on optional registry login steps
+
+### Changed
+- Go 1.21 (EOL) bumped to Go 1.23 across `go.mod`, `Dockerfile`, and CI workflows
+- Docker base image pinned from `alpine:latest` to `alpine:3.21`
+- Fixed `go.sum*` glob to `go.sum` in Dockerfile `COPY`
+
 ### Added
 - Initial release of SyncerD
 - Support for syncing images from Docker Hub to multiple registries:
