@@ -29,7 +29,7 @@ data:
         {{- end }}
         watch_tags: {{ default true .watch_tags }}
     {{- end }}
-    state_path: {{ .Values.config.state_path | quote }}
+    state_path: {{ if .Values.persistence.enabled }}{{ .Values.config.state_path | quote }}{{ else }}""{{ end }}
     fail_fast: {{ .Values.config.fail_fast }}
     slack:
       enabled: {{ .Values.config.slack.enabled }}

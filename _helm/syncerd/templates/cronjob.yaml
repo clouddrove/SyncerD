@@ -17,9 +17,9 @@ spec:
             {{- include "syncerd.selectorLabels" . | nindent 12 }}
         spec:
           restartPolicy: {{ .Values.cronjob.restartPolicy }}
-          {{- with .Values.dockerConfigSecret }}
+          {{- with .Values.imagePullSecrets }}
           imagePullSecrets:
-            - name: {{ . | quote }}
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if .Values.serviceAccount.create }}
           serviceAccountName: {{ include "syncerd.fullname" . }}
@@ -40,7 +40,7 @@ spec:
                 - --once
               env:
                 - name: SYNCERD_STATE_PATH
-                  value: {{ .Values.config.state_path | quote }}
+                  value: {{ if .Values.persistence.enabled }}{{ .Values.config.state_path | quote }}{{ else }}""{{ end }}
                 {{- if .Values.existingSecret }}
                 - name: SYNCERD_SOURCE_USERNAME
                   valueFrom:
@@ -104,12 +104,18 @@ spec:
                       key: SYNCERD_SLACK_CHANNEL
                       optional: true
                 {{- end }}
+                {{- if .Values.dockerConfigSecret }}
+                - name: DOCKER_CONFIG
+                  value: /root/.docker
+                {{- end }}
               volumeMounts:
                 - name: config
                   mountPath: /config
                   readOnly: true
+                {{- if .Values.persistence.enabled }}
                 - name: data
                   mountPath: /data
+                {{- end }}
                 {{- if .Values.dockerConfigSecret }}
                 - name: docker-config
                   mountPath: /root/.docker
@@ -125,9 +131,6 @@ spec:
             - name: data
               persistentVolumeClaim:
                 claimName: {{ include "syncerd.fullname" . }}-state
-            {{- else }}
-            - name: data
-              emptyDir: {}
             {{- end }}
             {{- if .Values.dockerConfigSecret }}
             - name: docker-config

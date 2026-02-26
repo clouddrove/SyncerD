@@ -63,8 +63,19 @@ secret:
   slackWebhookUrl: ""
   slackChannel: ""
 
-# Optional: mount Docker config for destination registry auth (ECR, ACR, GCR, GHCR)
-# Create secret: kubectl create secret generic syncerd-docker-config --from-file=.dockerconfigjson=$HOME/.docker/config.json --type=kubernetes.io/dockerconfigjson
+# imagePullSecrets: secrets used to pull the syncerd image itself (e.g. from a private registry).
+# This is separate from dockerConfigSecret which is for destination registry auth.
+# Example:
+#   imagePullSecrets:
+#     - name: ghcr-pull-secret
+imagePullSecrets: []
+
+# dockerConfigSecret: name of a Secret containing a Docker config for destination registry auth
+# (ECR, ACR, GCR, GHCR). Must have a .dockerconfigjson key.
+# Create: kubectl create secret generic syncerd-docker-config \
+#   --from-file=.dockerconfigjson=$HOME/.docker/config.json \
+#   --type=kubernetes.io/dockerconfigjson
+# Note: ECR tokens expire every 12h; refresh this secret before expiry.
 dockerConfigSecret: ""
 
 # Resource limits for the sync job
