@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-02-26
+
+### Fixed
+- Helm: docker config secret was mounted at `/root/.docker` which is inside `/root` (mode 700); non-root pod user (uid 1000) could not traverse the directory even with `fsGroup` set — mount path changed to `/var/lib/syncerd/.docker` and `DOCKER_CONFIG` updated to match
+
+### Changed
+- Docker image is now built for `linux/amd64` and `linux/arm64` (multi-arch manifest); QEMU added to the release pipeline and `--platform=$BUILDPLATFORM` used in the builder stage for native-speed cross-compilation; GitHub Actions layer cache enabled
+
 ## [0.0.3] - 2026-02-26
 
 ### Fixed

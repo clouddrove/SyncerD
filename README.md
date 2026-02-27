@@ -102,6 +102,8 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Releases** | Download the [latest release](https://github.com/clouddrove/syncerd/releases) for your OS/arch |
 | **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest syncerd sync --once` (mount config + auth as needed) |
 
+The Docker image is a **multi-arch manifest** supporting `linux/amd64` and `linux/arm64` (AWS Graviton, Apple Silicon).
+
 Requires Go 1.23+ to build from source.
 
 ---
@@ -133,7 +135,7 @@ Set `config.destinations` and `config.images` in `values.yaml` or via `--set`.
 
 **Credentials:**
 - Docker Hub (source): use `existingSecret` (recommended) or `secret.*` in values.
-- Destination registries (ECR/ACR/GCR/GHCR): create a Docker config secret and set `dockerConfigSecret`. SyncerD automatically sets `DOCKER_CONFIG` so the credentials are found even when the pod runs as a non-root user.
+- Destination registries (ECR/ACR/GCR/GHCR): create a Docker config secret and set `dockerConfigSecret`. SyncerD automatically sets `DOCKER_CONFIG=/var/lib/syncerd/.docker` so the credentials are found even when the pod runs as a non-root user.
 - To pull the SyncerD image itself from a private registry, use `imagePullSecrets` — this is separate from `dockerConfigSecret`.
 
 **ECR note:** ECR tokens expire every 12 hours. Refresh `dockerConfigSecret` before expiry:

@@ -68,7 +68,7 @@ kubectl create secret generic syncerd-creds -n syncerd \
 
 SyncerD uses the Docker credential config for destination registry auth. Create a secret from your local Docker config after logging in, then set `dockerConfigSecret`.
 
-**`DOCKER_CONFIG` is set automatically** when `dockerConfigSecret` is configured, so credentials are found even though the pod runs as a non-root user.
+**`DOCKER_CONFIG=/var/lib/syncerd/.docker` is set automatically** when `dockerConfigSecret` is configured. The secret is mounted at that path (not under `/root`) so the credentials are readable by the non-root pod user.
 
 > **Note:** `dockerConfigSecret` is only for destination registry auth. To pull the SyncerD image itself from a private registry, use `imagePullSecrets` instead — these are separate concerns.
 
