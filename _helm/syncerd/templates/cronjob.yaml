@@ -106,7 +106,7 @@ spec:
                 {{- end }}
                 {{- if .Values.dockerConfigSecret }}
                 - name: DOCKER_CONFIG
-                  value: /root/.docker
+                  value: /var/lib/syncerd/.docker
                 {{- end }}
               volumeMounts:
                 - name: config
@@ -118,7 +118,7 @@ spec:
                 {{- end }}
                 {{- if .Values.dockerConfigSecret }}
                 - name: docker-config
-                  mountPath: /root/.docker
+                  mountPath: /var/lib/syncerd/.docker
                   readOnly: true
                 {{- end }}
               resources:
