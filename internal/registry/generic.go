@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -58,23 +57,6 @@ func (r *GenericRegistry) ImageExists(ctx context.Context, image, tag string) (b
 		return false, err
 	}
 	return true, nil
-}
-
-func (r *GenericRegistry) PullImage(ctx context.Context, image, tag string) (string, error) {
-	ref := fmt.Sprintf("%s/%s:%s", r.registry, image, tag)
-	d, err := crane.Digest(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(r.keychain))
-	if err != nil {
-		return "", err
-	}
-	return d, nil
-}
-
-func (r *GenericRegistry) PushImage(ctx context.Context, image, tag, digest string) error {
-	_ = ctx
-	_ = image
-	_ = tag
-	_ = digest
-	return fmt.Errorf("push not supported: use crane.Copy/Push in sync engine")
 }
 
 func (r *GenericRegistry) GetRegistryURL() string {

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -188,39 +187,6 @@ func (r *DockerHubRegistry) ImageExists(ctx context.Context, image, tag string) 
 		return false, err
 	}
 	return true, nil
-}
-
-func (r *DockerHubRegistry) PullImage(ctx context.Context, image, tag string) (string, error) {
-	ref, err := name.ParseReference(fmt.Sprintf("%s/%s:%s", r.registry, image, tag))
-	if err != nil {
-		return "", err
-	}
-
-	var auth authn.Authenticator
-	if r.token != "" {
-		auth = &authn.Bearer{Token: r.token}
-	} else if r.username != "" && r.password != "" {
-		auth = &authn.Basic{
-			Username: r.username,
-			Password: r.password,
-		}
-	}
-
-	img, err := crane.Pull(ref.String(), crane.WithAuth(auth), crane.WithContext(ctx))
-	if err != nil {
-		return "", fmt.Errorf("failed to pull image: %w", err)
-	}
-
-	digest, err := img.Digest()
-	if err != nil {
-		return "", fmt.Errorf("failed to get digest: %w", err)
-	}
-
-	return digest.String(), nil
-}
-
-func (r *DockerHubRegistry) PushImage(ctx context.Context, image, tag, digest string) error {
-	return fmt.Errorf("push not supported for source registry")
 }
 
 func (r *DockerHubRegistry) GetRegistryURL() string {
