@@ -16,12 +16,6 @@ type Registry interface {
 	// ImageExists checks if an image with the given tag exists
 	ImageExists(ctx context.Context, image, tag string) (bool, error)
 
-	// PullImage pulls an image from the registry
-	PullImage(ctx context.Context, image, tag string) (string, error) // returns image digest
-
-	// PushImage pushes an image to the registry
-	PushImage(ctx context.Context, image, tag, digest string) error
-
 	// GetRegistryURL returns the full registry URL
 	GetRegistryURL() string
 }
