@@ -1,5 +1,5 @@
 # Binaries
-syncerd
+/syncerd
 *.exe
 *.exe~
 *.dll
