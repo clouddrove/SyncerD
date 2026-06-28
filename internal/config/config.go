@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"os"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -65,9 +65,25 @@ func Load(configPath string) (*Config, error) {
 		viper.AddConfigPath("./config")
 	}
 
-	// Environment variables
+	// Environment variables: SYNCERD_ prefix, with nested keys mapped via
+	// dot->underscore (e.g. source.username <- SYNCERD_SOURCE_USERNAME).
 	viper.SetEnvPrefix("SYNCERD")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+	// Explicitly bind nested keys so they resolve during Unmarshal even when
+	// no config file or default is present for them.
+	for _, key := range []string{
+		"source.username",
+		"source.password",
+		"source.token",
+		"state_path",
+		"slack.webhook_url",
+		"slack.channel",
+		"slack.message_format",
+		"fail_fast",
+	} {
+		_ = viper.BindEnv(key)
+	}
 
 	// Set defaults
 	viper.SetDefault("source.type", "dockerhub")
@@ -92,38 +108,6 @@ func Load(configPath string) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
-	}
-
-	// Override with environment variables if set
-	if username := os.Getenv("SYNCERD_SOURCE_USERNAME"); username != "" {
-		cfg.Source.Username = username
-	}
-	if password := os.Getenv("SYNCERD_SOURCE_PASSWORD"); password != "" {
-		cfg.Source.Password = password
-	}
-	if token := os.Getenv("SYNCERD_SOURCE_TOKEN"); token != "" {
-		cfg.Source.Token = token
-	}
-	if statePath := os.Getenv("SYNCERD_STATE_PATH"); statePath != "" {
-		cfg.StatePath = statePath
-	}
-	if slackWebhook := os.Getenv("SYNCERD_SLACK_WEBHOOK_URL"); slackWebhook != "" {
-		cfg.Slack.WebhookURL = slackWebhook
-	}
-	if slackChannel := os.Getenv("SYNCERD_SLACK_CHANNEL"); slackChannel != "" {
-		cfg.Slack.Channel = slackChannel
-	}
-	if slackFormat := os.Getenv("SYNCERD_SLACK_MESSAGE_FORMAT"); slackFormat != "" {
-		cfg.Slack.MessageFormat = slackFormat
-	}
-	if failFast := os.Getenv("SYNCERD_FAIL_FAST"); failFast != "" {
-		// treat any non-empty, non-"0", non-"false" as true
-		switch failFast {
-		case "0", "false", "FALSE", "False":
-			cfg.FailFast = false
-		default:
-			cfg.FailFast = true
-		}
 	}
 
 	// Validate config
