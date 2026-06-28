@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-06-28
+
+### Security
+- Resolved 38 vulnerabilities (1 critical, 14 high, 20 medium, 2 low, 1 unknown) reported by the Artifact Hub / Trivy image scan; 35 were Go `stdlib` CVEs fixed by rebuilding with a newer Go toolchain
+- `github.com/docker/cli` bumped `v27.5.1` → `v29.6.1` (CVE-2025-15558)
+- `golang.org/x/sys` bumped `v0.15.0` → `v0.46.0` (CVE-2026-39824)
+
+### Changed
+- Go 1.23 bumped to Go 1.26 across `go.mod`, `Dockerfile`, and CI workflows (`ci.yml`, `release.yml`, `syncerd.yml`) to pick up patched standard-library crypto/tls, crypto/x509, net, net/url, and net/http fixes
+
 ## [0.0.4] - 2026-02-26
 
 ### Fixed
