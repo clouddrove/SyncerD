@@ -3,7 +3,7 @@
 # workflow so ArtifactHub can verify repository ownership.
 # After creating the repository on https://artifacthub.io, copy its
 # Repository ID here to claim the "Verified Publisher" badge.
-repositoryID: ""
+repositoryID: "199e1ccd-a73f-4912-9cb3-e924e477e748"
 owners:
   - name: CloudDrove
     email: hello@clouddrove.com
