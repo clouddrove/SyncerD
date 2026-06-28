@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "SyncerD Helm chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      },
+      "required": ["repository", "tag"]
+    },
+    "cronjob": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schedule": { "type": "string", "minLength": 1 },
+        "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] },
+        "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "restartPolicy": { "type": "string", "enum": ["OnFailure", "Never"] }
+      },
+      "required": ["schedule"]
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "size": { "type": "string", "minLength": 1 },
+        "storageClass": { "type": "string" }
+      },
+      "required": ["enabled"]
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "registry": { "type": "string" }
+          },
+          "required": ["type"]
+        },
+        "destinations": { "type": "array", "items": { "type": "object" } },
+        "images": { "type": "array", "items": { "type": "object" } },
+        "state_path": { "type": "string" },
+        "fail_fast": { "type": "boolean" },
+        "slack": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "notify_on_new": { "type": "boolean" },
+            "notify_on_error": { "type": "boolean" },
+            "message_format": { "type": "string" }
+          }
+        }
+      },
+      "required": ["source", "destinations", "images"]
+    },
+    "existingSecret": { "type": "string" },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dockerhubUsername": { "type": "string" },
+        "dockerhubPassword": { "type": "string" },
+        "dockerhubToken": { "type": "string" },
+        "slackWebhookUrl": { "type": "string" },
+        "slackChannel": { "type": "string" }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"]
+      }
+    },
+    "dockerConfigSecret": { "type": "string" },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "limits": { "type": "object" },
+        "requests": { "type": "object" }
+      }
+    },
+    "securityContext": { "type": "object" },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" }
+      },
+      "required": ["create"]
+    }
+  },
+  "required": ["image", "cronjob", "persistence", "config"]
+}

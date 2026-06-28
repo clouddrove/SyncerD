@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-06-28
+
+### Added
+- Helm: `values.schema.json` so chart values are validated on install/template and Artifact Hub shows the "Values schema" badge
+- Helm release pipeline now signs the published OCI chart with keyless cosign (Sigstore OIDC), enabling the Artifact Hub "Signed" badge
+
 ## [0.0.6] - 2026-06-28
 
 ### Security

@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless cosign signing (Sigstore OIDC)
 
 env:
   CHART_DIR: ./_helm/syncerd
@@ -55,8 +56,22 @@ jobs:
             --destination dist
 
       - name: Push chart to GHCR (OCI)
+        id: push
         run: |
-          helm push dist/syncerd-${{ steps.version.outputs.version }}.tgz "${OCI_REPO}"
+          helm push dist/syncerd-${{ steps.version.outputs.version }}.tgz "${OCI_REPO}" \
+            2>&1 | tee push.log
+          digest="$(awk '/Digest: /{print $2}' push.log)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign chart (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign \
+            "ghcr.io/clouddrove/charts/syncerd@${{ steps.push.outputs.digest }}"
 
       - name: Install ORAS
         uses: oras-project/setup-oras@v1
