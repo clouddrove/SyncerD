@@ -13,8 +13,22 @@ keywords:
   - gcr
   - ghcr
 home: https://github.com/clouddrove/syncerd
+icon: https://raw.githubusercontent.com/clouddrove/syncerd/master/assets/syncerd-logo.png
 sources:
   - https://github.com/clouddrove/syncerd
 maintainers:
   - name: CloudDrove
     url: https://clouddrove.com
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Source
+      url: https://github.com/clouddrove/syncerd
+    - name: Support
+      url: https://github.com/clouddrove/syncerd/issues
+  artifacthub.io/maintainers: |
+    - name: CloudDrove
+      email: hello@clouddrove.com
+  artifacthub.io/images: |
+    - name: syncerd
+      image: ghcr.io/clouddrove/syncerd:latest
