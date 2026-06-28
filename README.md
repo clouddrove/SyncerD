@@ -15,6 +15,7 @@
   <a href="https://goreportcard.com/report/github.com/clouddrove/syncerd"><img src="https://goreportcard.com/badge/github.com/clouddrove/syncerd" alt="Go Report Card"></a>
   <a href="https://github.com/clouddrove/syncerd/releases"><img src="https://img.shields.io/github/v/release/clouddrove/syncerd?include_prereleases" alt="Release"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://artifacthub.io/packages/helm/syncerd/syncerd"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/syncerd" alt="Artifact Hub"></a>
 </p>
 
 ---
