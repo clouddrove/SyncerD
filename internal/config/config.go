@@ -147,7 +147,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one image is required")
 	}
 
+	seenNames := make(map[string]int, len(c.Destinations))
 	for i, dest := range c.Destinations {
+		if dest.Name == "" {
+			return fmt.Errorf("destinations[%d].name is required", i)
+		}
+		if j, ok := seenNames[dest.Name]; ok {
+			return fmt.Errorf("destinations[%d].name %q duplicates destinations[%d].name; names must be unique (used as the sync state key)", i, dest.Name, j)
+		}
+		seenNames[dest.Name] = i
 		if dest.Type == "" {
 			return fmt.Errorf("destinations[%d].type is required", i)
 		}
