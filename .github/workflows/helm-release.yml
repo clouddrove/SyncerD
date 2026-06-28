@@ -66,6 +66,11 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Log in to GHCR (cosign)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
+
       - name: Sign chart (keyless)
         env:
           COSIGN_YES: "true"
