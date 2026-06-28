@@ -135,6 +135,12 @@ func (r *DockerHubRegistry) ListTags(ctx context.Context, imageName string) ([]s
 			return nil, fmt.Errorf("fetch next page: %w", err)
 		}
 
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to list tags (pagination): %s - %s", resp.Status, string(body))
+		}
+
 		var nextResult struct {
 			Results []struct {
 				Name string `json:"name"`
