@@ -1,0 +1,9 @@
+# ArtifactHub repository metadata.
+# Pushed to the OCI repo (oci://ghcr.io/clouddrove/charts) by the helm-release
+# workflow so ArtifactHub can verify repository ownership.
+# After creating the repository on https://artifacthub.io, copy its
+# Repository ID here to claim the "Verified Publisher" badge.
+repositoryID: ""
+owners:
+  - name: CloudDrove
+    email: hello@clouddrove.com
