@@ -58,6 +58,24 @@ func TestRenderBlocksStructure(t *testing.T) {
 	}
 }
 
+func TestFirstSectionHasSyncerdLogoAccessory(t *testing.T) {
+	c := &SlackClient{}
+	blocks := c.renderBlocks(sampleMessage())
+	var found bool
+	for _, b := range blocks {
+		if b.Type == "section" {
+			if b.Accessory == nil || b.Accessory.ImageURL != syncerdLogoURL {
+				t.Fatalf("first section missing SyncerD logo accessory: %+v", b.Accessory)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no section block found")
+	}
+}
+
 func TestSendPostsBlockKitPayload(t *testing.T) {
 	var got map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
