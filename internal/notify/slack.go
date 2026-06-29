@@ -68,10 +68,9 @@ type attachment struct {
 // block is a generic Block Kit block. Fields are pointers/omitempty so a single
 // type can represent header, section, divider, and context blocks.
 type block struct {
-	Type      string        `json:"type"`
-	Text      *textObject   `json:"text,omitempty"`
-	Elements  []any         `json:"elements,omitempty"`
-	Accessory *imageElement `json:"accessory,omitempty"`
+	Type     string      `json:"type"`
+	Text     *textObject `json:"text,omitempty"`
+	Elements []any       `json:"elements,omitempty"`
 }
 
 type textObject struct {
@@ -138,14 +137,6 @@ func (c *SlackClient) renderBlocks(m Message) []block {
 		}
 		if buf.Len() > 0 {
 			blocks = append(blocks, sectionBlock(buf.String()))
-		}
-	}
-
-	// Show the SyncerD logo as a thumbnail on the first section block.
-	for i := range blocks {
-		if blocks[i].Type == "section" {
-			blocks[i].Accessory = &imageElement{Type: "image", ImageURL: syncerdLogoURL, AltText: "SyncerD"}
-			break
 		}
 	}
 
