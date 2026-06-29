@@ -20,7 +20,7 @@ clean:
 
 # Install to GOPATH/bin
 install:
-	go install ./...
+	go install -ldflags "$(LDFLAGS)" ./...
 
 # Lint code
 lint:
