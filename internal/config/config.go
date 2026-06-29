@@ -77,8 +77,11 @@ func Load(configPath string) (*Config, error) {
 		"source.password",
 		"source.token",
 		"state_path",
+		"slack.enabled",
 		"slack.webhook_url",
 		"slack.channel",
+		"slack.notify_on_new",
+		"slack.notify_on_error",
 		"slack.message_format",
 		"fail_fast",
 	} {
@@ -90,7 +93,9 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("source.registry", "docker.io")
 	viper.SetDefault("schedule", "0 0 */21 * *") // Every 3 weeks
 	viper.SetDefault("state_path", ".syncerd-state.json")
-	viper.SetDefault("slack.enabled", false)
+	// Slack is opt-out: configuring a webhook URL enables notifications.
+	// Set slack.enabled (or SYNCERD_SLACK_ENABLED) to false to suppress them.
+	viper.SetDefault("slack.enabled", true)
 	viper.SetDefault("slack.notify_on_new", true)
 	viper.SetDefault("slack.notify_on_error", true)
 	viper.SetDefault("slack.username", "SyncerD")

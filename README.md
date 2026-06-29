@@ -174,14 +174,15 @@ Full example: [syncerd.yaml.example](syncerd.yaml.example).
 | `images` | Images to sync; optional `tags`, `watch_tags` for new tag detection |
 | `schedule` | Cron expression when running without `--once` |
 | `state_path` | Optional state file for "already synced" tracking; leave empty for fully stateless |
-| `slack` | Optional webhook; notify on new syncs and/or failures |
+| `slack` | Optional webhook; notify on new syncs and/or failures. Enabled automatically once a webhook URL is set — set `slack.enabled: false` (or `SYNCERD_SLACK_ENABLED=false`) to suppress |
 | `fail_fast` | `true` = stop on first error; `false` = best-effort per image/tag |
 
 ### Environment variables
 
 Override with `SYNCERD_` prefix:
 `SYNCERD_SOURCE_USERNAME`, `SYNCERD_SOURCE_PASSWORD`, `SYNCERD_SOURCE_TOKEN`,
-`SYNCERD_STATE_PATH`, `SYNCERD_SLACK_WEBHOOK_URL`, `SYNCERD_SLACK_CHANNEL`,
+`SYNCERD_STATE_PATH`, `SYNCERD_SLACK_ENABLED`, `SYNCERD_SLACK_WEBHOOK_URL`,
+`SYNCERD_SLACK_CHANNEL`, `SYNCERD_SLACK_NOTIFY_ON_NEW`, `SYNCERD_SLACK_NOTIFY_ON_ERROR`,
 `SYNCERD_SLACK_MESSAGE_FORMAT`, `SYNCERD_FAIL_FAST`.
 
 ### Authentication
