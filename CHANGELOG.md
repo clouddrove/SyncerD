@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-06-29
+
+### Fixed
+- Slack notifications never fired when only `slack.webhook_url` (or `SYNCERD_SLACK_WEBHOOK_URL`) was set, because `slack.enabled` defaulted to `false` and the notifier was never constructed — no success or failure alerts were sent (#27)
+
+### Changed
+- Slack is now opt-out: configuring a webhook URL enables notifications automatically. Set `slack.enabled: false` (or `SYNCERD_SLACK_ENABLED=false`) to suppress
+- Bound the previously unbound `slack.enabled`, `slack.notify_on_new`, and `slack.notify_on_error` keys to environment variables
+
 ## [0.0.7] - 2026-06-28
 
 ### Added
