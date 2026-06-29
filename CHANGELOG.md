@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-06-29
+
+### Fixed
+- `syncerd -v` always printed `dev (commit: unknown)` because `make build`, `docker build`, and the CI image were built with a plain `go build` that never injected `main.version`/`main.commit`. Version and commit metadata are now injected via ldflags in the Makefile (git-derived), Dockerfile (`VERSION`/`COMMIT` build args), and release workflow (git tag + SHA) (#29)
+
 ## [0.0.8] - 2026-06-29
 
 ### Fixed
