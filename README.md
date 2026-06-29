@@ -26,7 +26,7 @@ Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limi
 
 - **One config, many registries** — Sync the same set of images to ECR, ACR, GCR, and GHCR from a single YAML.
 - **Runs everywhere** — CLI, GitHub Actions, Kubernetes (Helm CronJob). Stateless by default; no DB required.
-- **New tags, automatically** — Watches source tags and syncs only what's missing; optional Slack alerts on new syncs or failures.
+- **New tags, automatically** — Watches source tags and syncs only what's missing; optional branded Slack alerts (color-coded Block Kit) on new syncs or failures.
 
 ---
 
@@ -89,7 +89,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Scheduled runs** | Built-in cron (e.g. every 3 weeks) or use K8s CronJob / GitHub Actions |
 | **GitHub Action** | [Marketplace action](https://github.com/marketplace) — drop into workflows |
 | **Helm chart** | Run as a CronJob on Kubernetes; stateless by default (no PVC) |
-| **Slack** | Optional notifications on new syncs and failures (compact/detailed) |
+| **Slack** | Optional branded Block Kit alerts (color-coded, per-destination grouping) on new syncs and failures (compact/detailed) |
 | **Secure** | Docker Hub via env/secret; destinations via Docker credential config |
 
 ---
