@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-06-29
+
+### Changed
+- Slack notifications now render as branded Block Kit messages: a colored bar (green for new syncs, red for failures), an emoji header with the count, code-formatted image refs grouped per destination in detailed mode, and a small SyncerD logo footer reading "SyncerD — powered by CloudDrove" (#31)
+
 ## [0.0.10] - 2026-06-29
 
 ### Fixed
