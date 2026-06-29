@@ -135,7 +135,7 @@ func (s *Syncer) SyncAll(ctx context.Context) (*Report, error) {
 				_ = s.state.Save(s.statePath)
 				// Slack best-effort
 				if s.slack != nil && s.config.Slack.NotifyOnErr {
-					_ = s.slack.SendText(ctx, s.formatSlackFailures(report.Failures))
+					_ = s.slack.Send(ctx, s.buildFailureMessage(report.Failures))
 				}
 				return report, err
 			}
@@ -153,10 +153,10 @@ func (s *Syncer) SyncAll(ctx context.Context) (*Report, error) {
 	// Slack notifications (best effort; do not fail the sync because Slack failed)
 	if s.slack != nil {
 		if s.config.Slack.NotifyOnNew && len(report.NewSyncs) > 0 {
-			_ = s.slack.SendText(ctx, s.formatSlackNewSyncs(report.NewSyncs))
+			_ = s.slack.Send(ctx, s.buildNewSyncsMessage(report.NewSyncs))
 		}
 		if s.config.Slack.NotifyOnErr && len(report.Failures) > 0 {
-			_ = s.slack.SendText(ctx, s.formatSlackFailures(report.Failures))
+			_ = s.slack.Send(ctx, s.buildFailureMessage(report.Failures))
 		}
 	}
 
@@ -166,88 +166,107 @@ func (s *Syncer) SyncAll(ctx context.Context) (*Report, error) {
 	return report, nil
 }
 
-func (s *Syncer) formatSlackNewSyncs(events []SyncEvent) string {
-	if s != nil && s.config != nil && s.config.Slack.MessageFormat == "detailed" {
-		return slackDetailedNewSyncs(events)
-	}
-	return slackCompactNewSyncs(events)
+// detailed reports whether notifications should be grouped per destination.
+func (s *Syncer) detailed() bool {
+	return s != nil && s.config != nil && s.config.Slack.MessageFormat == "detailed"
 }
 
-func (s *Syncer) formatSlackFailures(events []FailureEvent) string {
-	if s != nil && s.config != nil && s.config.Slack.MessageFormat == "detailed" {
-		return slackDetailedFailures(events)
+func (s *Syncer) buildNewSyncsMessage(events []SyncEvent) notify.Message {
+	const max = 50
+	n := len(events)
+	m := notify.Message{
+		Emoji:    ":white_check_mark:",
+		Title:    fmt.Sprintf("%d image(s)/tag(s) synced", n),
+		Color:    notify.ColorSuccess,
+		Fallback: fmt.Sprintf("SyncerD: %d image(s)/tag(s) synced", n),
 	}
-	return slackCompactFailures(events)
-}
 
-func slackCompactNewSyncs(events []SyncEvent) string {
-	const max = 25
-	msg := "*SyncerD*: new images/tags synced:\n"
+	if s.detailed() {
+		byDest := map[string][]SyncEvent{}
+		order := []string{}
+		for _, e := range events {
+			if _, ok := byDest[e.Destination]; !ok {
+				order = append(order, e.Destination)
+			}
+			byDest[e.Destination] = append(byDest[e.Destination], e)
+		}
+		seen := 0
+		for _, dest := range order {
+			list := byDest[dest]
+			sec := notify.Section{Heading: fmt.Sprintf("%s (%d)", dest, len(list))}
+			for _, e := range list {
+				if seen >= max {
+					sec.Lines = append(sec.Lines, fmt.Sprintf("_…and %d more_", n-max))
+					m.Sections = append(m.Sections, sec)
+					return m
+				}
+				sec.Lines = append(sec.Lines, "• `"+e.Ref+"`")
+				seen++
+			}
+			m.Sections = append(m.Sections, sec)
+		}
+		return m
+	}
+
+	sec := notify.Section{}
 	for i, e := range events {
 		if i >= max {
-			msg += fmt.Sprintf("…and %d more\n", len(events)-max)
+			sec.Lines = append(sec.Lines, fmt.Sprintf("_…and %d more_", n-max))
 			break
 		}
-		msg += fmt.Sprintf("- `%s`\n", e.Ref)
+		sec.Lines = append(sec.Lines, "• `"+e.Ref+"`")
 	}
-	return msg
+	m.Sections = []notify.Section{sec}
+	return m
 }
 
-func slackCompactFailures(events []FailureEvent) string {
-	const max = 25
-	msg := "*SyncerD*: sync failures:\n"
+func (s *Syncer) buildFailureMessage(events []FailureEvent) notify.Message {
+	const max = 50
+	n := len(events)
+	m := notify.Message{
+		Emoji:    ":rotating_light:",
+		Title:    fmt.Sprintf("%d sync failure(s)", n),
+		Color:    notify.ColorFailure,
+		Fallback: fmt.Sprintf("SyncerD: %d sync failure(s)", n),
+	}
+
+	if s.detailed() {
+		byDest := map[string][]FailureEvent{}
+		order := []string{}
+		for _, e := range events {
+			if _, ok := byDest[e.Destination]; !ok {
+				order = append(order, e.Destination)
+			}
+			byDest[e.Destination] = append(byDest[e.Destination], e)
+		}
+		seen := 0
+		for _, dest := range order {
+			list := byDest[dest]
+			sec := notify.Section{Heading: fmt.Sprintf("%s (%d)", dest, len(list))}
+			for _, e := range list {
+				if seen >= max {
+					sec.Lines = append(sec.Lines, fmt.Sprintf("_…and %d more_", n-max))
+					m.Sections = append(m.Sections, sec)
+					return m
+				}
+				sec.Lines = append(sec.Lines, fmt.Sprintf("• `%s`\n  ↳ _%s_", e.Ref, e.Error))
+				seen++
+			}
+			m.Sections = append(m.Sections, sec)
+		}
+		return m
+	}
+
+	sec := notify.Section{}
 	for i, e := range events {
 		if i >= max {
-			msg += fmt.Sprintf("…and %d more\n", len(events)-max)
+			sec.Lines = append(sec.Lines, fmt.Sprintf("_…and %d more_", n-max))
 			break
 		}
-		msg += fmt.Sprintf("- `%s` — %s\n", e.Ref, e.Error)
+		sec.Lines = append(sec.Lines, fmt.Sprintf("• `%s`\n  ↳ _%s_", e.Ref, e.Error))
 	}
-	return msg
-}
-
-func slackDetailedNewSyncs(events []SyncEvent) string {
-	const max = 75
-	byDest := map[string][]SyncEvent{}
-	for _, e := range events {
-		byDest[e.Destination] = append(byDest[e.Destination], e)
-	}
-	msg := fmt.Sprintf("*SyncerD*: new images/tags synced (%d):\n", len(events))
-	seen := 0
-	for dest, list := range byDest {
-		msg += fmt.Sprintf("\n*%s* (%d)\n", dest, len(list))
-		for _, e := range list {
-			seen++
-			if seen > max {
-				msg += fmt.Sprintf("…and %d more\n", len(events)-max)
-				return msg
-			}
-			msg += fmt.Sprintf("- `%s`\n", e.Ref)
-		}
-	}
-	return msg
-}
-
-func slackDetailedFailures(events []FailureEvent) string {
-	const max = 75
-	byDest := map[string][]FailureEvent{}
-	for _, e := range events {
-		byDest[e.Destination] = append(byDest[e.Destination], e)
-	}
-	msg := fmt.Sprintf("*SyncerD*: sync failures (%d):\n", len(events))
-	seen := 0
-	for dest, list := range byDest {
-		msg += fmt.Sprintf("\n*%s* (%d)\n", dest, len(list))
-		for _, e := range list {
-			seen++
-			if seen > max {
-				msg += fmt.Sprintf("…and %d more\n", len(events)-max)
-				return msg
-			}
-			msg += fmt.Sprintf("- `%s`\n  - %s\n", e.Ref, e.Error)
-		}
-	}
-	return msg
+	m.Sections = []notify.Section{sec}
+	return m
 }
 
 func (s *Syncer) SyncImage(ctx context.Context, imgCfg config.ImageConfig) error {
