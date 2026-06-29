@@ -13,9 +13,7 @@ import (
 const (
 	brandName = "CloudDrove"
 	brandURL  = "https://clouddrove.com"
-	// Official CloudDrove favicon (PNG; Slack image blocks do not render .ico).
-	brandLogoURL = "https://clouddrove.com/apple-touch-icon.png"
-	// SyncerD product logo, shown as a thumbnail on the alert.
+	// SyncerD product logo, used as the alert thumbnail and footer icon.
 	syncerdLogoURL = "https://raw.githubusercontent.com/clouddrove/SyncerD/master/assets/syncerd-logo.png"
 
 	// Attachment color bars.
@@ -165,9 +163,9 @@ func footerBlock() block {
 	return block{
 		Type: "context",
 		Elements: []any{
-			imageElement{Type: "image", ImageURL: brandLogoURL, AltText: brandName},
+			imageElement{Type: "image", ImageURL: syncerdLogoURL, AltText: "SyncerD"},
 			&textObject{Type: "mrkdwn", Text: fmt.Sprintf(
-				"*SyncerD* — powered by <%s|%s> :cloud:", brandURL, brandName)},
+				"*SyncerD* — powered by <%s|%s>", brandURL, brandName)},
 		},
 	}
 }

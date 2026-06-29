@@ -45,7 +45,7 @@ func TestRenderBlocksStructure(t *testing.T) {
 				hasBrand = true
 			}
 		case imageElement:
-			if v.ImageURL == brandLogoURL {
+			if v.ImageURL == syncerdLogoURL {
 				hasLogo = true
 			}
 		}
