@@ -11,9 +11,10 @@ import (
 
 // CloudDrove branding used in every notification footer.
 const (
-	brandName    = "CloudDrove"
-	brandURL     = "https://clouddrove.com"
-	brandLogoURL = "https://github.com/clouddrove.png"
+	brandName = "CloudDrove"
+	brandURL  = "https://clouddrove.com"
+	// Official CloudDrove favicon (PNG; Slack image blocks do not render .ico).
+	brandLogoURL = "https://clouddrove.com/apple-touch-icon.png"
 
 	// Attachment color bars.
 	ColorSuccess = "#2EB67D" // green
