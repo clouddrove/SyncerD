@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-06-29
+
+### Fixed
+- `make install` still produced `dev (commit: unknown)` because the `install` target ran a plain `go install` without ldflags — now injects version/commit like the other build targets (#29)
+- Local build version string now uses the nearest tag without the `v` prefix (e.g. `0.0.9`), matching the released binary format instead of the verbose `git describe` output (#29)
+
 ## [0.0.9] - 2026-06-29
 
 ### Fixed
