@@ -1,8 +1,13 @@
 .PHONY: build test clean install lint
 
+# Version info injected at build time
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+
 # Build the binary
 build:
-	go build -o syncerd ./main.go
+	go build -ldflags "$(LDFLAGS)" -o syncerd ./main.go
 
 # Run tests
 test:
@@ -28,7 +33,7 @@ run-example:
 
 # Build for multiple platforms
 build-all:
-	GOOS=linux GOARCH=amd64 go build -o syncerd-linux-amd64 ./main.go
-	GOOS=darwin GOARCH=amd64 go build -o syncerd-darwin-amd64 ./main.go
-	GOOS=darwin GOARCH=arm64 go build -o syncerd-darwin-arm64 ./main.go
-	GOOS=windows GOARCH=amd64 go build -o syncerd-windows-amd64.exe ./main.go
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o syncerd-linux-amd64 ./main.go
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o syncerd-darwin-amd64 ./main.go
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o syncerd-darwin-arm64 ./main.go
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o syncerd-windows-amd64.exe ./main.go
