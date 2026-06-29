@@ -1,8 +1,7 @@
 apiVersion: v2
 name: syncerd
-description: Your lightweight Docker registry sync engine - sync images from Docker Hub to ECR, ACR, GCR, GHCR
-type: application
-version: 0.1.0
+description: Syncs container images from Docker Hub to ECR, ACR, GCR, and GHCR to avoid rate limits and keep your registries up to date.
+version: 0.1.1
 appVersion: "1.0.0"
 keywords:
   - docker
