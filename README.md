@@ -36,6 +36,7 @@ Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limi
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Examples](#examples)
 - [Configuration](#configuration)
 - [Contributing & support](#contributing--support)
 
@@ -76,7 +77,7 @@ export SYNCERD_SOURCE_PASSWORD=your-dockerhub-token
 ./syncerd sync --once
 ```
 
-That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marketplace) or [Kubernetes (Helm)](#run-with-helm-kubernetes) for scheduled syncs.
+That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marketplace), [Azure DevOps](#azure-devops-pipeline), or [Kubernetes (Helm)](#run-with-helm-kubernetes) for scheduled syncs.
 
 ---
 
@@ -124,6 +125,10 @@ Add SyncerD to your workflow:
 
 Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
 
+### Azure DevOps Pipeline
+
+SyncerD can run in Azure DevOps by using the published container image and the agent's Docker credential config. See [examples/azure-devops](examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example.
+
 ### Run with Helm (Kubernetes)
 
 Run SyncerD as a **CronJob** (stateless by default; no PVC):
@@ -160,6 +165,14 @@ syncerd sync --once                    # Run once and exit
 syncerd sync                           # Run with built-in cron (from config)
 syncerd sync --config /path/to/config.yaml
 ```
+
+---
+
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [Azure DevOps Pipeline](examples/azure-devops) | Run SyncerD in Azure DevOps and mirror a Docker Hub image into Azure Container Registry. |
 
 ---
 

@@ -1,0 +1,20 @@
+# SyncerD Azure Container Registry smoke-test configuration.
+# Copy this file to syncerd.azure.yaml and replace <acr-login-server>.
+
+source:
+  type: dockerhub
+  registry: docker.io
+
+destinations:
+  - name: syncerd-acr-test
+    type: acr
+    registry: <acr-login-server>
+    region: East US
+
+images:
+  - name: library/nginx
+    tags:
+      - alpine
+    watch_tags: false
+
+fail_fast: false
