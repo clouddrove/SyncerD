@@ -78,7 +78,7 @@ Run the pipeline manually and optionally override:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `configPath` | `examples/azure-devops/syncerd.azure.yaml.example` | SyncerD config path from the repository. |
+| `configPath` | `azure-devops-extension/examples/azure-devops/syncerd.azure.yaml.example` | SyncerD config path from the repository. |
 | `syncerdVersion` | `v0.0.11` | SyncerD release tag installed by `SyncerD@1`. |
 
 ## Azure DevOps Setup

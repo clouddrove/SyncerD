@@ -138,7 +138,7 @@ Install and run SyncerD from Azure Pipelines:
 
 Add registry authentication steps before this task. SyncerD uses the default Docker keychain, so `docker login`, Azure CLI, and other registry login helpers work as they do on the command line.
 
-See [examples/azure-devops](examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example. Extension source and publishing notes are in [azure-devops-extension/README.md](azure-devops-extension/README.md).
+See [azure-devops-extension/examples/azure-devops](azure-devops-extension/examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example. Extension source and publishing notes are in [azure-devops-extension/README.md](azure-devops-extension/README.md).
 
 ### Run with Helm (Kubernetes)
 
@@ -183,7 +183,7 @@ syncerd sync --config /path/to/config.yaml
 
 | Example | Description |
 |---------|-------------|
-| [Azure DevOps Pipeline](examples/azure-devops) | Run SyncerD in Azure DevOps and mirror a Docker Hub image into Azure Container Registry. |
+| [Azure DevOps Pipeline](azure-devops-extension/examples/azure-devops) | Run SyncerD in Azure DevOps and mirror a Docker Hub image into Azure Container Registry. |
 
 ---
 

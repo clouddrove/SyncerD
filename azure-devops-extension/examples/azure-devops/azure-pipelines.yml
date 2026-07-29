@@ -5,7 +5,7 @@ parameters:
   - name: configPath
     displayName: SyncerD config path from repo
     type: string
-    default: examples/azure-devops/syncerd.azure.yaml.example
+    default: azure-devops-extension/examples/azure-devops/syncerd.azure.yaml.example
   - name: syncerdVersion
     displayName: SyncerD version
     type: string
