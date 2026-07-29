@@ -1,0 +1,50 @@
+{
+  "manifestVersion": 1,
+  "id": "syncerd-azure-pipelines",
+  "name": "SyncerD Azure Pipelines",
+  "version": "1.0.0",
+  "publisher": "clouddrove",
+  "public": true,
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "description": "Install and run the SyncerD CLI from Azure Pipelines.",
+  "categories": [
+    "Azure Pipelines"
+  ],
+  "icons": {
+    "default": "syncerd-clouddrove-icon-128x128.png"
+  },
+  "content": {
+    "details": {
+      "path": "overview.md"
+    }
+  },
+  "files": [
+    {
+      "path": "overview.md",
+      "addressable": true
+    },
+    {
+      "path": "syncerd-clouddrove-icon-128x128.png",
+      "addressable": true
+    },
+    {
+      "path": "SyncerD"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "syncerd-task",
+      "type": "ms.vss-distributed-task.task",
+      "targets": [
+        "ms.vss-distributed-task.tasks"
+      ],
+      "properties": {
+        "name": "SyncerD"
+      }
+    }
+  ]
+}

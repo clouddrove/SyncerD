@@ -125,9 +125,20 @@ Add SyncerD to your workflow:
 
 Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
 
-### Azure DevOps Pipeline
+### Use as an Azure DevOps Marketplace extension
 
-SyncerD can run in Azure DevOps by using the published container image and the agent's Docker credential config. See [examples/azure-devops](examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example.
+Install and run SyncerD from Azure Pipelines:
+
+```yaml
+- task: SyncerD@1
+  inputs:
+    version: latest
+    command: sync --config syncerd.yaml --once=true
+```
+
+Add registry authentication steps before this task. SyncerD uses the default Docker keychain, so `docker login`, Azure CLI, and other registry login helpers work as they do on the command line.
+
+See [examples/azure-devops](examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example. Extension source and publishing notes are in [azure-devops-extension/README.md](azure-devops-extension/README.md).
 
 ### Run with Helm (Kubernetes)
 

@@ -3,21 +3,13 @@ pr: none
 
 parameters:
   - name: configPath
-    displayName: Optional SyncerD config path from repo
+    displayName: SyncerD config path from repo
     type: string
-    default: ""
-  - name: syncerdImage
-    displayName: SyncerD container image
+    default: examples/azure-devops/syncerd.azure.yaml.example
+  - name: syncerdVersion
+    displayName: SyncerD version
     type: string
-    default: ghcr.io/clouddrove/syncerd:latest
-  - name: imageName
-    displayName: Source image
-    type: string
-    default: library/nginx
-  - name: imageTag
-    displayName: Source image tag
-    type: string
-    default: alpine
+    default: v0.0.11
 
 pool:
   vmImage: ubuntu-latest
@@ -25,43 +17,26 @@ pool:
 variables:
   - group: syncer-d
   - name: SYNCERD_STATE_PATH
-    value: /pipeline-workspace/.syncerd-state.json
+    value: "$(Pipeline.Workspace)/.syncerd-state.json"
 
 steps:
   - checkout: self
 
+  - task: SyncerD@1
+    displayName: Install SyncerD
+    inputs:
+      version: ${{ parameters.syncerdVersion }}
+      command: ""
+
   - script: |
       set -euo pipefail
-
-      if [ -n "${{ parameters.configPath }}" ]; then
-        echo "##vso[task.setvariable variable=SYNCERD_CONTAINER_CONFIG_PATH]/workspace/${{ parameters.configPath }}"
-        exit 0
-      fi
-
-      cat > "$(Pipeline.Workspace)/syncerd-test.yaml" <<YAML
-      source:
-        type: dockerhub
-        registry: docker.io
-
-      destinations:
-        - name: syncerd-acr-test
-          type: acr
-          registry: ${ACR_LOGIN_SERVER}
-          region: East US
-
-      images:
-        - name: ${{ parameters.imageName }}
-          tags:
-            - ${{ parameters.imageTag }}
-          watch_tags: false
-
-      fail_fast: false
-      YAML
-
-      echo "##vso[task.setvariable variable=SYNCERD_CONTAINER_CONFIG_PATH]/pipeline-workspace/syncerd-test.yaml"
+      sed "s|<acr-login-server>|$ACR_LOGIN_SERVER|g" \
+        "$SYNCERD_CONFIG_PATH" \
+        > "$(Pipeline.Workspace)/syncerd-test.yaml"
     displayName: Prepare SyncerD test config
     env:
       ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+      SYNCERD_CONFIG_PATH: ${{ parameters.configPath }}
 
   - script: |
       set -euo pipefail
@@ -72,15 +47,10 @@ steps:
       ACR_USERNAME: $(ACR_USERNAME)
       ACR_PASSWORD: $(ACR_PASSWORD)
 
-  - script: |
-      set -euo pipefail
-      docker run --rm \
-        -v "$(System.DefaultWorkingDirectory):/workspace" \
-        -v "$(Pipeline.Workspace):/pipeline-workspace" \
-        -v "$HOME/.docker:/root/.docker" \
-        -e SYNCERD_STATE_PATH \
-        "${{ parameters.syncerdImage }}" \
-        sync --config "$(SYNCERD_CONTAINER_CONFIG_PATH)" --once=true
-    displayName: Run SyncerD
+  - script: syncerd --help
+    displayName: Verify SyncerD is on PATH
+
+  - script: syncerd sync --config "$(Pipeline.Workspace)/syncerd-test.yaml" --once=true
+    displayName: Sync Docker Hub image to ACR
     env:
       SYNCERD_STATE_PATH: $(SYNCERD_STATE_PATH)

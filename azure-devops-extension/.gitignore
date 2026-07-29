@@ -1,0 +1,3 @@
+*.vsix
+.npm-cache/
+SyncerD/node_modules/

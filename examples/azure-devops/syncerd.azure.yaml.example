@@ -17,4 +17,4 @@ images:
       - alpine
     watch_tags: false
 
-fail_fast: false
+fail_fast: true

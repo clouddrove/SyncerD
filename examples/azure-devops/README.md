@@ -1,6 +1,6 @@
 # Azure DevOps Pipeline Example
 
-This example runs SyncerD from an Azure DevOps pipeline and syncs a public Docker Hub image into Azure Container Registry (ACR).
+This example installs SyncerD with the Azure DevOps Marketplace task, then syncs a public Docker Hub image into Azure Container Registry (ACR).
 
 The pipeline is useful for:
 
@@ -12,8 +12,8 @@ The pipeline is useful for:
 
 | File | Purpose |
 | --- | --- |
-| `azure-pipelines.yml` | Azure DevOps pipeline that runs the published SyncerD container. |
-| `syncerd.azure.yaml.example` | Optional checked-in SyncerD config for an ACR smoke test. |
+| `azure-pipelines.yml` | Azure DevOps pipeline that installs SyncerD with `SyncerD@1` and runs a smoke test. |
+| `syncerd.azure.yaml.example` | Checked-in SyncerD config for an ACR smoke test. |
 
 ## Required Variables
 
@@ -32,11 +32,11 @@ Docker Hub credentials are not required for this example because it pulls the pu
 The pipeline:
 
 1. Checks out the repository.
-2. Generates a small SyncerD config unless `configPath` is supplied.
+2. Installs SyncerD with the Azure DevOps Marketplace task.
 3. Logs in to ACR with `docker login`.
-4. Runs `ghcr.io/clouddrove/syncerd:latest`.
-5. Mounts the Azure Pipelines Docker credential config into the SyncerD container.
-6. Syncs the requested source image tag into ACR.
+4. Renders `syncerd.azure.yaml.example` with the ACR login server.
+5. Runs `syncerd --help` to verify the CLI is on `PATH`.
+6. Runs `syncerd sync --config ... --once=true`.
 
 The default test syncs:
 
@@ -50,9 +50,9 @@ to:
 <ACR_LOGIN_SERVER>/library/nginx:alpine
 ```
 
-## Use The Generated Config
+## Config
 
-By default, the pipeline generates this config at runtime:
+The checked-in example config syncs:
 
 ```yaml
 source:
@@ -62,7 +62,7 @@ source:
 destinations:
   - name: syncerd-acr-test
     type: acr
-    registry: ${ACR_LOGIN_SERVER}
+    registry: <acr-login-server>
     region: East US
 
 images:
@@ -71,39 +71,23 @@ images:
       - alpine
     watch_tags: false
 
-fail_fast: false
+fail_fast: true
 ```
 
 Run the pipeline manually and optionally override:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `imageName` | `library/nginx` | Source image name. |
-| `imageTag` | `alpine` | Source image tag. |
-| `syncerdImage` | `ghcr.io/clouddrove/syncerd:latest` | SyncerD container image to run. |
-
-## Use A Checked-In Config
-
-If you want full control over the SyncerD config, copy the example file:
-
-```bash
-cp examples/azure-devops/syncerd.azure.yaml.example syncerd.azure.yaml
-```
-
-Replace `<acr-login-server>` with your ACR login server, then run the pipeline with:
-
-```text
-configPath: syncerd.azure.yaml
-```
-
-When `configPath` is set, the pipeline uses that file instead of generating a temporary config.
+| `configPath` | `examples/azure-devops/syncerd.azure.yaml.example` | SyncerD config path from the repository. |
+| `syncerdVersion` | `v0.0.11` | SyncerD release tag installed by `SyncerD@1`. |
 
 ## Azure DevOps Setup
 
-1. Copy `azure-pipelines.yml` into the root of your repository or create a pipeline that points to this file.
-2. Create the `syncer-d` variable group.
-3. Add `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and secret `ACR_PASSWORD`.
-4. Run the pipeline manually.
+1. Install the `clouddrove.syncerd-azure-pipelines` extension in your Azure DevOps organization.
+2. Copy `azure-pipelines.yml` into the root of your repository or create a pipeline that points to this file.
+3. Create the `syncer-d` variable group.
+4. Add `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and secret `ACR_PASSWORD`.
+5. Run the pipeline manually.
 
 For scheduled syncs, add a schedule to the top of the pipeline:
 
@@ -119,6 +103,6 @@ schedules:
 
 ## Notes
 
-- The pipeline does not build SyncerD; it runs the published container image.
-- The Docker config from the Azure Pipelines agent is mounted into the container so SyncerD can push to ACR.
-- Do not set `-w /workspace` on `docker run`; the SyncerD image entrypoint is relative and expects the image default working directory.
+- The pipeline does not build SyncerD; it installs a released binary with `SyncerD@1`.
+- `command: ""` on the task installs SyncerD and leaves it available on `PATH` for later script steps.
+- The ACR login server is injected into the checked-in config at runtime so secrets and environment-specific values stay out of source.

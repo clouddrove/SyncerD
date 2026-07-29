@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "deef5b09-541a-4a07-a550-8663ef57291a",
+  "name": "SyncerD",
+  "friendlyName": "SyncerD",
+  "description": "Install and run the SyncerD CLI.",
+  "helpMarkDown": "Installs syncerd from GitHub Releases, adds it to PATH, and optionally runs a syncerd command.",
+  "category": "Utility",
+  "author": "CloudDrove",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 0
+  },
+  "minimumAgentVersion": "2.206.1",
+  "instanceNameFormat": "SyncerD $(command)",
+  "inputs": [
+    {
+      "name": "version",
+      "type": "string",
+      "label": "SyncerD version",
+      "defaultValue": "latest",
+      "required": false,
+      "helpMarkDown": "Version of syncerd to install. Use `latest` or a release tag such as `v0.0.11`."
+    },
+    {
+      "name": "command",
+      "type": "string",
+      "label": "Command",
+      "defaultValue": "sync --config syncerd.yaml --once=true",
+      "required": false,
+      "helpMarkDown": "SyncerD command and arguments to run after installation. Leave blank to install only."
+    },
+    {
+      "name": "workingDirectory",
+      "type": "filePath",
+      "label": "Working directory",
+      "defaultValue": "$(System.DefaultWorkingDirectory)",
+      "required": false,
+      "helpMarkDown": "Directory where the syncerd command runs."
+    }
+  ],
+  "execution": {
+    "Node20_1": {
+      "target": "index.js"
+    }
+  },
+  "restrictions": {
+    "commands": {
+      "mode": "restricted"
+    }
+  }
+}
