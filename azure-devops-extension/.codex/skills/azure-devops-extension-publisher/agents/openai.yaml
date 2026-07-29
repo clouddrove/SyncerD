@@ -1,0 +1,3 @@
+name: SyncerD Azure DevOps Extension Publisher
+description: Updates, validates, packages, and publishes the SyncerD Azure DevOps Marketplace extension.
+model: gpt-5
