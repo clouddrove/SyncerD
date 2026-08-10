@@ -226,3 +226,90 @@ func TestSecretsCollectsAllTokens(t *testing.T) {
 		t.Fatalf("got %d secrets, want 2: %v", len(secrets), secrets)
 	}
 }
+
+func TestValidateGitSyncRequiresToken(t *testing.T) {
+	g := validGit()
+	g.Providers[0].Token = ""
+	cfg := &Config{Git: g}
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "token is required") {
+		t.Fatalf("expected a token error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "SYNCERD_GIT_GH_TOKEN") {
+		t.Errorf("error should name the environment variable, got %v", err)
+	}
+}
+
+func TestValidateGitSyncAzureEntraNeedsNoToken(t *testing.T) {
+	g := validGit()
+	g.Providers = append(g.Providers, GitProviderConfig{
+		Name: "ado", Type: "azuredevops", Owner: "org", Project: "platform", Auth: "entra",
+	})
+	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-ado", Source: "gh", Destination: "ado"})
+	cfg := &Config{Git: g}
+	if err := cfg.ValidateGitSync(); err != nil {
+		t.Fatalf("entra mode must not require a token, got %v", err)
+	}
+}
+
+func TestValidateGitSyncAzurePatNeedsToken(t *testing.T) {
+	g := validGit()
+	g.Providers = append(g.Providers, GitProviderConfig{
+		Name: "ado", Type: "azuredevops", Owner: "org", Project: "platform",
+	})
+	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-ado", Source: "gh", Destination: "ado"})
+	cfg := &Config{Git: g}
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "pat mode") {
+		t.Fatalf("an unset auth means pat and must require a token, got %v", err)
+	}
+}
+
+func TestValidateGitSyncCodeCommitNeedsNoToken(t *testing.T) {
+	g := validGit()
+	g.Providers = append(g.Providers, GitProviderConfig{
+		Name: "cc", Type: "codecommit", Region: "us-east-1",
+	})
+	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
+	cfg := &Config{Git: g}
+	if err := cfg.ValidateGitSync(); err != nil {
+		t.Fatalf("codecommit uses an IAM role and must not require a token, got %v", err)
+	}
+}
+
+func TestValidateGitSyncCodeCommitRejectsHalfCredentialPair(t *testing.T) {
+	g := validGit()
+	g.Providers = append(g.Providers, GitProviderConfig{
+		Name: "cc", Type: "codecommit", Region: "us-east-1", GitUsername: "only-user",
+	})
+	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
+	cfg := &Config{Git: g}
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "set both or neither") {
+		t.Fatalf("expected a half credential pair error, got %v", err)
+	}
+}
+
+func TestValidateGitSyncRejectsCollidingEnvKeys(t *testing.T) {
+	g := validGit()
+	g.Providers[0].Name = "gh-mirrors"
+	g.Providers = append(g.Providers, GitProviderConfig{
+		Name: "gh.mirrors", Type: "github", Owner: "other", Token: "ghp_other_token",
+	})
+	g.Mirrors[0].Source = "gh-mirrors"
+	cfg := &Config{Git: g}
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "SYNCERD_GIT_GH_MIRRORS") {
+		t.Fatalf("expected an environment prefix collision error, got %v", err)
+	}
+}
+
+func TestValidateGitSyncRejectsBadVisibility(t *testing.T) {
+	g := validGit()
+	g.Mirrors[0].Visibility = "pubic"
+	cfg := &Config{Git: g}
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "visibility") {
+		t.Fatalf("expected a visibility error, got %v", err)
+	}
+}

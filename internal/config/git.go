@@ -31,6 +31,11 @@ var validPushModes = map[string]bool{
 	"fast-forward": true,
 }
 
+var validVisibilities = map[string]bool{
+	"private": true,
+	"public":  true,
+}
+
 // GitConfig is the top level git mirroring configuration.
 type GitConfig struct {
 	Providers   []GitProviderConfig `mapstructure:"providers"`
@@ -224,6 +229,7 @@ func (c *Config) ValidateGitSync() error {
 	}
 
 	seenProviders := make(map[string]int, len(g.Providers))
+	seenEnvKeys := make(map[string]string, len(g.Providers))
 	for i, p := range g.Providers {
 		if p.Name == "" {
 			return fmt.Errorf("git.providers[%d].name is required", i)
@@ -232,6 +238,12 @@ func (c *Config) ValidateGitSync() error {
 			return fmt.Errorf("git.providers[%d].name %q duplicates git.providers[%d].name; names must be unique", i, p.Name, j)
 		}
 		seenProviders[p.Name] = i
+
+		envKey := envKeyFragment(p.Name)
+		if other, ok := seenEnvKeys[envKey]; ok {
+			return fmt.Errorf("git.providers[%d].name %q and provider %q both map to the environment prefix SYNCERD_GIT_%s; provider names must remain distinct after non alphanumeric characters are replaced with underscores", i, p.Name, other, envKey)
+		}
+		seenEnvKeys[envKey] = p.Name
 
 		if p.Type == "" {
 			return fmt.Errorf("git.providers[%d].type is required", i)
@@ -254,8 +266,7 @@ func (c *Config) ValidateGitSync() error {
 		}
 		seenMirrors[m.Name] = i
 
-		src, ok := g.Provider(m.Source)
-		if !ok {
+		if _, ok := g.Provider(m.Source); !ok {
 			return fmt.Errorf("git.mirrors[%d].source %q refers to an unknown provider", i, m.Source)
 		}
 		dst, ok := g.Provider(m.Destination)
@@ -265,10 +276,13 @@ func (c *Config) ValidateGitSync() error {
 		if m.Source == m.Destination {
 			return fmt.Errorf("git.mirrors[%d] has the same source and destination %q", i, m.Source)
 		}
-		_ = src
 
 		if m.PushMode != "" && !validPushModes[m.PushMode] {
 			return fmt.Errorf("git.mirrors[%d].push_mode %q is invalid: want mirror, additive, or fast-forward", i, m.PushMode)
+		}
+
+		if m.Visibility != "" && !validVisibilities[m.Visibility] {
+			return fmt.Errorf("git.mirrors[%d].visibility %q is invalid: want private or public", i, m.Visibility)
 		}
 
 		if m.NameTemplate != "" {
@@ -292,12 +306,18 @@ func validateProviderFields(i int, p GitProviderConfig) error {
 		if p.Owner == "" {
 			return fmt.Errorf("git.providers[%d].owner is required for type %q", i, p.Type)
 		}
+		if p.Token == "" {
+			return fmt.Errorf("git.providers[%d].token is required for type %q; set it in the config or as SYNCERD_GIT_%s_TOKEN", i, p.Type, envKeyFragment(p.Name))
+		}
 	case "bitbucket":
 		if p.Owner == "" {
 			return fmt.Errorf("git.providers[%d].owner is required for type %q", i, p.Type)
 		}
 		if p.Email == "" {
 			return fmt.Errorf("git.providers[%d].email is required for bitbucket: app passwords were retired on 2026-07-28 and API tokens authenticate with the account email", i)
+		}
+		if p.Token == "" {
+			return fmt.Errorf("git.providers[%d].token is required for bitbucket; set it in the config or as SYNCERD_GIT_%s_TOKEN", i, envKeyFragment(p.Name))
 		}
 	case "azuredevops":
 		if p.Owner == "" {
@@ -309,9 +329,19 @@ func validateProviderFields(i int, p GitProviderConfig) error {
 		if p.Auth != "" && p.Auth != "pat" && p.Auth != "entra" {
 			return fmt.Errorf("git.providers[%d].auth %q is invalid for azuredevops: want pat or entra", i, p.Auth)
 		}
+		// An empty auth means pat. Entra mode carries no token because the
+		// credential comes from a service principal or managed identity.
+		if p.Auth != "entra" && p.Token == "" {
+			return fmt.Errorf("git.providers[%d].token is required for azuredevops in pat mode; set it in the config or as SYNCERD_GIT_%s_TOKEN, or set auth: entra", i, envKeyFragment(p.Name))
+		}
 	case "codecommit":
 		if p.Region == "" {
 			return fmt.Errorf("git.providers[%d].region is required for codecommit", i)
+		}
+		// Credentials come from the IAM role. The static git credential
+		// pair is an optional fallback and is all or nothing.
+		if (p.GitUsername == "") != (p.GitPassword == "") {
+			return fmt.Errorf("git.providers[%d] sets only one of git_username and git_password for codecommit; set both or neither", i)
 		}
 	}
 	return nil
