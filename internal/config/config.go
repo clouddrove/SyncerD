@@ -15,6 +15,7 @@ type Config struct {
 	StatePath    string              `mapstructure:"state_path"`
 	Slack        SlackConfig         `mapstructure:"slack"`
 	FailFast     bool                `mapstructure:"fail_fast"`
+	Git          *GitConfig          `mapstructure:"git"`
 }
 
 type SourceConfig struct {
@@ -113,6 +114,11 @@ func Load(configPath string) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	if cfg.Git != nil {
+		cfg.Git.ApplyEnvOverlay()
+		cfg.Git.ApplyDefaults()
 	}
 
 	return &cfg, nil

@@ -1,0 +1,318 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/clouddrove/syncerd/internal/vcs"
+)
+
+// Supported provider types. Only github and gitlab are implemented in this
+// plan; the rest are accepted by validation so their configs can be written
+// ahead of the provider packages landing.
+var supportedProviderTypes = map[string]bool{
+	"github":      true,
+	"gitlab":      true,
+	"bitbucket":   true,
+	"azuredevops": true,
+	"codecommit":  true,
+}
+
+// flatProviderTypes cannot represent a nested repository path.
+var flatProviderTypes = map[string]bool{
+	"azuredevops": true,
+	"codecommit":  true,
+}
+
+var validPushModes = map[string]bool{
+	"mirror":       true,
+	"additive":     true,
+	"fast-forward": true,
+}
+
+// GitConfig is the top level git mirroring configuration.
+type GitConfig struct {
+	Providers   []GitProviderConfig `mapstructure:"providers"`
+	Mirrors     []MirrorConfig      `mapstructure:"mirrors"`
+	WorkDir     string              `mapstructure:"work_dir"`
+	StatePath   string              `mapstructure:"state_path"`
+	Schedule    string              `mapstructure:"schedule"`
+	Concurrency int                 `mapstructure:"concurrency"`
+}
+
+// GitProviderConfig describes one git hosting provider. Fields are a union
+// across provider types; validation enforces the per type requirements.
+type GitProviderConfig struct {
+	Name   string `mapstructure:"name"`
+	Type   string `mapstructure:"type"`
+	Owner  string `mapstructure:"owner"`
+	APIURL string `mapstructure:"api_url"`
+	Token  string `mapstructure:"token"`
+
+	Email string `mapstructure:"email"` // bitbucket
+
+	Project string `mapstructure:"project"` // azuredevops
+	Auth    string `mapstructure:"auth"`    // azuredevops: pat | entra
+
+	Region      string `mapstructure:"region"`       // codecommit
+	GitUsername string `mapstructure:"git_username"` // codecommit fallback
+	GitPassword string `mapstructure:"git_password"` // codecommit fallback
+}
+
+// FilterConfig selects which discovered repositories to mirror. The bool
+// pointers distinguish "unset" from an explicit false.
+type FilterConfig struct {
+	Include      []string `mapstructure:"include"`
+	Exclude      []string `mapstructure:"exclude"`
+	SkipArchived *bool    `mapstructure:"skip_archived"`
+	SkipForks    *bool    `mapstructure:"skip_forks"`
+}
+
+// SkipArchivedOrDefault reports the effective skip_archived value.
+func (f FilterConfig) SkipArchivedOrDefault() bool {
+	if f.SkipArchived == nil {
+		return true
+	}
+	return *f.SkipArchived
+}
+
+// SkipForksOrDefault reports the effective skip_forks value.
+func (f FilterConfig) SkipForksOrDefault() bool {
+	if f.SkipForks == nil {
+		return true
+	}
+	return *f.SkipForks
+}
+
+// MirrorConfig is one ordered source to destination pair.
+type MirrorConfig struct {
+	Name          string       `mapstructure:"name"`
+	Source        string       `mapstructure:"source"`
+	Destination   string       `mapstructure:"destination"`
+	Filters       FilterConfig `mapstructure:"filters"`
+	CreateMissing *bool        `mapstructure:"create_missing"`
+	Visibility    string       `mapstructure:"visibility"`
+	PushMode      string       `mapstructure:"push_mode"`
+	Adopt         bool         `mapstructure:"adopt"`
+	NameTemplate  string       `mapstructure:"name_template"`
+}
+
+// CreateMissingOrDefault reports the effective create_missing value.
+func (m MirrorConfig) CreateMissingOrDefault() bool {
+	if m.CreateMissing == nil {
+		return true
+	}
+	return *m.CreateMissing
+}
+
+// Provider looks up a provider by name.
+func (g *GitConfig) Provider(name string) (*GitProviderConfig, bool) {
+	if g == nil {
+		return nil, false
+	}
+	for i := range g.Providers {
+		if g.Providers[i].Name == name {
+			return &g.Providers[i], true
+		}
+	}
+	return nil, false
+}
+
+// Secrets returns every configured secret, for the output redactor.
+func (g *GitConfig) Secrets() []string {
+	if g == nil {
+		return nil
+	}
+	var out []string
+	for _, p := range g.Providers {
+		if p.Token != "" {
+			out = append(out, p.Token)
+		}
+		if p.GitPassword != "" {
+			out = append(out, p.GitPassword)
+		}
+	}
+	return out
+}
+
+// ApplyDefaults fills unset values. Safe to call more than once.
+func (g *GitConfig) ApplyDefaults() {
+	if g == nil {
+		return
+	}
+	if g.WorkDir == "" {
+		g.WorkDir = "/var/lib/syncerd/git"
+	}
+	if g.StatePath == "" {
+		g.StatePath = ".syncerd-git-state.json"
+	}
+	if g.Schedule == "" {
+		g.Schedule = "0 */6 * * *"
+	}
+	if g.Concurrency <= 0 {
+		g.Concurrency = 4
+	}
+	for i := range g.Mirrors {
+		m := &g.Mirrors[i]
+		if m.Visibility == "" {
+			m.Visibility = "private"
+		}
+		if m.PushMode == "" {
+			m.PushMode = "mirror"
+		}
+		if m.NameTemplate == "" {
+			m.NameTemplate = "{{ .Repo }}"
+		}
+	}
+}
+
+// ApplyEnvOverlay fills empty provider secrets from the environment, using
+// SYNCERD_GIT_<NAME>_TOKEN and SYNCERD_GIT_<NAME>_GIT_PASSWORD. Provider
+// names are upper cased with non alphanumeric characters mapped to
+// underscore. Values set in the config file win, so a deployment can pin a
+// secret explicitly.
+//
+// viper cannot bind environment variables to dynamic list indices, which is
+// why this overlay exists rather than a set of BindEnv calls.
+func (g *GitConfig) ApplyEnvOverlay() {
+	if g == nil {
+		return
+	}
+	for i := range g.Providers {
+		p := &g.Providers[i]
+		key := envKeyFragment(p.Name)
+		if p.Token == "" {
+			p.Token = os.Getenv("SYNCERD_GIT_" + key + "_TOKEN")
+		}
+		if p.GitPassword == "" {
+			p.GitPassword = os.Getenv("SYNCERD_GIT_" + key + "_GIT_PASSWORD")
+		}
+		if p.GitUsername == "" {
+			p.GitUsername = os.Getenv("SYNCERD_GIT_" + key + "_GIT_USERNAME")
+		}
+	}
+}
+
+// envKeyFragment converts a provider name into an environment variable
+// fragment: "gh-mirrors" becomes "GH_MIRRORS".
+func envKeyFragment(name string) string {
+	var sb strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			sb.WriteRune(r)
+		default:
+			sb.WriteRune('_')
+		}
+	}
+	return sb.String()
+}
+
+// ValidateGitSync checks the configuration required by the git-sync
+// command. It is never called by the sync command.
+func (c *Config) ValidateGitSync() error {
+	g := c.Git
+	if g == nil {
+		return fmt.Errorf("git configuration is required for git-sync")
+	}
+	if len(g.Providers) == 0 {
+		return fmt.Errorf("at least one git provider is required")
+	}
+	if len(g.Mirrors) == 0 {
+		return fmt.Errorf("at least one mirror is required")
+	}
+
+	seenProviders := make(map[string]int, len(g.Providers))
+	for i, p := range g.Providers {
+		if p.Name == "" {
+			return fmt.Errorf("git.providers[%d].name is required", i)
+		}
+		if j, ok := seenProviders[p.Name]; ok {
+			return fmt.Errorf("git.providers[%d].name %q duplicates git.providers[%d].name; names must be unique", i, p.Name, j)
+		}
+		seenProviders[p.Name] = i
+
+		if p.Type == "" {
+			return fmt.Errorf("git.providers[%d].type is required", i)
+		}
+		if !supportedProviderTypes[p.Type] {
+			return fmt.Errorf("git.providers[%d].type %q is an unsupported provider type", i, p.Type)
+		}
+		if err := validateProviderFields(i, p); err != nil {
+			return err
+		}
+	}
+
+	seenMirrors := make(map[string]int, len(g.Mirrors))
+	for i, m := range g.Mirrors {
+		if m.Name == "" {
+			return fmt.Errorf("git.mirrors[%d].name is required", i)
+		}
+		if j, ok := seenMirrors[m.Name]; ok {
+			return fmt.Errorf("git.mirrors[%d].name %q duplicates git.mirrors[%d].name; names must be unique (used as the state key)", i, m.Name, j)
+		}
+		seenMirrors[m.Name] = i
+
+		src, ok := g.Provider(m.Source)
+		if !ok {
+			return fmt.Errorf("git.mirrors[%d].source %q refers to an unknown provider", i, m.Source)
+		}
+		dst, ok := g.Provider(m.Destination)
+		if !ok {
+			return fmt.Errorf("git.mirrors[%d].destination %q refers to an unknown provider", i, m.Destination)
+		}
+		if m.Source == m.Destination {
+			return fmt.Errorf("git.mirrors[%d] has the same source and destination %q", i, m.Source)
+		}
+		_ = src
+
+		if m.PushMode != "" && !validPushModes[m.PushMode] {
+			return fmt.Errorf("git.mirrors[%d].push_mode %q is invalid: want mirror, additive, or fast-forward", i, m.PushMode)
+		}
+
+		if m.NameTemplate != "" {
+			tpl, err := vcs.ParseNameTemplate(m.NameTemplate)
+			if err != nil {
+				return fmt.Errorf("git.mirrors[%d].name_template is invalid: %w", i, err)
+			}
+			if tpl.ProducesNestedName() && flatProviderTypes[dst.Type] {
+				return fmt.Errorf("git.mirrors[%d].name_template renders a nested name but destination type %q does not support nested repository paths", i, dst.Type)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateProviderFields enforces the per type required fields.
+func validateProviderFields(i int, p GitProviderConfig) error {
+	switch p.Type {
+	case "github", "gitlab":
+		if p.Owner == "" {
+			return fmt.Errorf("git.providers[%d].owner is required for type %q", i, p.Type)
+		}
+	case "bitbucket":
+		if p.Owner == "" {
+			return fmt.Errorf("git.providers[%d].owner is required for type %q", i, p.Type)
+		}
+		if p.Email == "" {
+			return fmt.Errorf("git.providers[%d].email is required for bitbucket: app passwords were retired on 2026-07-28 and API tokens authenticate with the account email", i)
+		}
+	case "azuredevops":
+		if p.Owner == "" {
+			return fmt.Errorf("git.providers[%d].owner is required for type %q", i, p.Type)
+		}
+		if p.Project == "" {
+			return fmt.Errorf("git.providers[%d].project is required for azuredevops: repositories live inside a project and SyncerD does not create projects", i)
+		}
+		if p.Auth != "" && p.Auth != "pat" && p.Auth != "entra" {
+			return fmt.Errorf("git.providers[%d].auth %q is invalid for azuredevops: want pat or entra", i, p.Auth)
+		}
+	case "codecommit":
+		if p.Region == "" {
+			return fmt.Errorf("git.providers[%d].region is required for codecommit", i)
+		}
+	}
+	return nil
+}
