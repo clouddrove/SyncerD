@@ -7,7 +7,7 @@ const redactionMarker = "[REDACTED]"
 
 // minSecretLen guards against a short or accidental secret redacting
 // large amounts of unrelated output.
-const minSecretLen = 3
+const minSecretLen = 6
 
 // Redactor removes provider secrets from git output before it reaches a
 // log line, a GitFailure, or a Slack message.

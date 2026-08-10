@@ -20,8 +20,8 @@ func TestRedactReplacesSecrets(t *testing.T) {
 }
 
 func TestRedactHandlesMultipleSecretsAndOccurrences(t *testing.T) {
-	r := NewRedactor("aaa", "bbb")
-	got := r.Redact("aaa then bbb then aaa")
+	r := NewRedactor("secret-aaa", "secret-bbb")
+	got := r.Redact("secret-aaa then secret-bbb then secret-aaa")
 	if got != "[REDACTED] then [REDACTED] then [REDACTED]" {
 		t.Errorf("got %q", got)
 	}
@@ -29,10 +29,16 @@ func TestRedactHandlesMultipleSecretsAndOccurrences(t *testing.T) {
 
 func TestRedactIgnoresEmptyAndShortSecrets(t *testing.T) {
 	// An empty or very short secret would redact unrelated text.
-	r := NewRedactor("", "ab")
-	in := "a normal message about ab"
+	r := NewRedactor("", "ab", "12345")
+	in := "a normal message about ab and 12345"
 	if got := r.Redact(in); got != in {
 		t.Errorf("short or empty secrets must be ignored, got %q", got)
+	}
+
+	// Six characters is the threshold and must be redacted.
+	atLimit := NewRedactor("123456")
+	if got := atLimit.Redact("value 123456 here"); got != "value [REDACTED] here" {
+		t.Errorf("a secret at the minimum length must be redacted, got %q", got)
 	}
 }
 
