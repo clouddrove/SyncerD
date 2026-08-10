@@ -39,10 +39,19 @@ func ParseNameTemplate(raw string) (*NameTemplate, error) {
 // Raw returns the template source.
 func (n *NameTemplate) Raw() string { return n.raw }
 
-// UsesPath reports whether the template references .Path, which produces a
-// nested name that flat destinations cannot accept.
-func (n *NameTemplate) UsesPath() bool {
-	return strings.Contains(n.raw, ".Path")
+// ProducesNestedName reports whether this template can render a name
+// containing a slash, which flat destinations cannot accept. It probes the
+// template with a fixture repo rather than inspecting the template source,
+// so it catches both an explicit .Path reference and a composed name such
+// as "{{ .Owner }}/{{ .Repo }}". A template that fails to render is treated
+// as nested so the caller rejects it at load time.
+func (n *NameTemplate) ProducesNestedName() bool {
+	out, err := n.Render(Repo{
+		Owner: "probe-owner",
+		Name:  "probe-repo",
+		Path:  "probe-owner/probe-repo",
+	})
+	return err != nil || strings.Contains(out, "/")
 }
 
 // Render produces the destination repository name for r.

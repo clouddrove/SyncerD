@@ -22,6 +22,13 @@ func TestParseEmptyUsesDefault(t *testing.T) {
 	if got != "terraform-aws-vpc" {
 		t.Errorf("Render() = %q, want terraform-aws-vpc", got)
 	}
+	tplSpace, err := ParseNameTemplate("   ")
+	if err != nil {
+		t.Fatalf("parse whitespace: %v", err)
+	}
+	if tplSpace.Raw() != DefaultNameTemplate {
+		t.Errorf("Raw() for whitespace = %q, want %q", tplSpace.Raw(), DefaultNameTemplate)
+	}
 }
 
 func TestRenderVariables(t *testing.T) {
@@ -73,18 +80,28 @@ func TestRenderRejectsEmptyResult(t *testing.T) {
 	}
 }
 
-func TestUsesPath(t *testing.T) {
-	withPath, _ := ParseNameTemplate("{{ .Path }}")
-	if !withPath.UsesPath() {
-		t.Error("expected UsesPath true")
+func TestProducesNestedName(t *testing.T) {
+	cases := map[string]bool{
+		"{{ .Path }}":                     true,
+		"{{ .Owner }}/{{ .Repo }}":        true,
+		"team/{{ .Repo }}":                true,
+		"{{ .Repo }}":                     false,
+		"{{ .Owner }}-{{ .Repo }}":        false,
+		"ado-{{ .Repo }}":                 false,
+		"":                                false,
 	}
-	withoutPath, _ := ParseNameTemplate("{{ .Repo }}")
-	if withoutPath.UsesPath() {
-		t.Error("expected UsesPath false")
+	for raw, want := range cases {
+		tpl, err := ParseNameTemplate(raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
+		}
+		if got := tpl.ProducesNestedName(); got != want {
+			t.Errorf("ProducesNestedName(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }
 
-func TestRenderRejectsSlashWhenCallerForbids(t *testing.T) {
+func TestRenderKeepsNestedPath(t *testing.T) {
 	tpl, _ := ParseNameTemplate("{{ .Path }}")
 	got, err := tpl.Render(sample)
 	if err != nil {
