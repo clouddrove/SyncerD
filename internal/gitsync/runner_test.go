@@ -11,7 +11,10 @@ import (
 	"github.com/clouddrove/syncerd/internal/vcs"
 )
 
-// git runs a git command in dir and fails the test on error.
+// git runs a git command in dir and fails the test on error. The extra
+// GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM entries make the fixture
+// hermetic: a developer's global or system git config cannot change what
+// these tests observe.
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -19,6 +22,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	cmd.Env = append(cmd.Environ(),
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -36,7 +40,7 @@ func newSourceRepo(t *testing.T) string {
 
 	git(t, root, "init", "--bare", "--initial-branch=main", bare)
 	git(t, root, "init", "--initial-branch=main", work)
-	if err := writeFile(filepath.Join(work, "README.md"), "hello\n"); err != nil {
+	if err := testWriteFile(filepath.Join(work, "README.md"), "hello\n"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	git(t, work, "add", ".")
@@ -113,6 +117,33 @@ func TestSyncCacheClonesThenUpdates(t *testing.T) {
 	}
 }
 
+func TestSyncCacheFetchesOnlyBranchesAndTags(t *testing.T) {
+	src := newSourceRepo(t)
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	r := NewRunner(nil)
+	ctx := context.Background()
+
+	// Simulate a host internal namespace such as refs/pull or
+	// refs/merge_requests, which must never reach the cache.
+	head := strings.TrimSpace(git(t, src, "rev-parse", "refs/heads/main"))
+	git(t, src, "update-ref", "refs/pull/1/head", head)
+
+	if err := r.SyncCache(ctx, src, cache, noCred); err != nil {
+		t.Fatalf("cache: %v", err)
+	}
+
+	out := git(t, cache, "for-each-ref", "--format=%(refname)")
+	if strings.Contains(out, "refs/pull/") {
+		t.Errorf("cache fetched a host internal namespace:\n%s", out)
+	}
+	if !strings.Contains(out, "refs/heads/main") {
+		t.Errorf("cache is missing the branch it should have fetched:\n%s", out)
+	}
+	if !strings.Contains(out, "refs/tags/v1.0.0") {
+		t.Errorf("cache is missing the tag it should have fetched:\n%s", out)
+	}
+}
+
 func TestPushMirrorCopiesBranchesAndTags(t *testing.T) {
 	src := newSourceRepo(t)
 	dest := newEmptyBare(t)
@@ -144,6 +175,27 @@ func TestPushMirrorCopiesBranchesAndTags(t *testing.T) {
 	}
 	if !strings.Contains(joined, "refs/tags/v1.0.0") {
 		t.Errorf("destination missing tag: %q", joined)
+	}
+}
+
+func TestPushMirrorRefusesEmptyCache(t *testing.T) {
+	dest := newSourceRepo(t) // destination deliberately has content
+	cache := filepath.Join(t.TempDir(), "empty.git")
+	r := NewRunner(nil)
+	ctx := context.Background()
+
+	git(t, filepath.Dir(cache), "init", "--bare", "--initial-branch=main", cache)
+
+	if _, err := r.Push(ctx, cache, dest, noCred, PushMirror, false); err == nil {
+		t.Fatal("mirror push from an empty cache must be refused")
+	}
+
+	refs, err := r.LsRemote(ctx, dest, noCred)
+	if err != nil {
+		t.Fatalf("ls-remote: %v", err)
+	}
+	if len(refs) == 0 {
+		t.Fatal("destination refs were destroyed by a push that should have been refused")
 	}
 }
 
@@ -227,6 +279,57 @@ func TestPushAdditiveDoesNotPrune(t *testing.T) {
 	}
 }
 
+func TestPushFastForwardRefusesRewrite(t *testing.T) {
+	src := newSourceRepo(t)
+	dest := newEmptyBare(t)
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	r := NewRunner(nil)
+	ctx := context.Background()
+
+	if err := r.SyncCache(ctx, src, cache, noCred); err != nil {
+		t.Fatalf("cache: %v", err)
+	}
+	if _, err := r.Push(ctx, cache, dest, noCred, PushFastForward, false); err != nil {
+		t.Fatalf("initial fast-forward push: %v", err)
+	}
+
+	before, err := r.LsRemote(ctx, dest, noCred)
+	if err != nil {
+		t.Fatalf("ls-remote: %v", err)
+	}
+
+	// Rewrite history at the source so the next push is not a fast
+	// forward. Amending the existing commit produces a new commit with
+	// the same parent (none) as the original, so it is not a descendant
+	// of what is already at the destination: adding a new commit on top
+	// with --allow-empty would still be a fast forward and would not
+	// exercise this path.
+	work := filepath.Join(t.TempDir(), "rewrite")
+	git(t, filepath.Dir(work), "clone", src, work)
+	git(t, work, "commit", "--amend", "-m", "rewritten")
+	git(t, work, "push", "--force", "origin", "HEAD:main")
+
+	if err := r.SyncCache(ctx, src, cache, noCred); err != nil {
+		t.Fatalf("recache: %v", err)
+	}
+	if _, err := r.Push(ctx, cache, dest, noCred, PushFastForward, false); err == nil {
+		t.Fatal("fast-forward mode must refuse a non fast forward update")
+	}
+
+	after, err := r.LsRemote(ctx, dest, noCred)
+	if err != nil {
+		t.Fatalf("ls-remote: %v", err)
+	}
+	if len(before) != len(after) {
+		t.Fatalf("ref count changed: before %d, after %d", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("destination ref changed despite a refused push: %+v became %+v", before[i], after[i])
+		}
+	}
+}
+
 func TestPushDryRunWritesNothing(t *testing.T) {
 	src := newSourceRepo(t)
 	dest := newEmptyBare(t)
@@ -251,6 +354,21 @@ func TestPushDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+func TestPushFailureReturnsError(t *testing.T) {
+	src := newSourceRepo(t)
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	r := NewRunner(nil)
+	ctx := context.Background()
+
+	if err := r.SyncCache(ctx, src, cache, noCred); err != nil {
+		t.Fatalf("cache: %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "no-such-repo.git")
+	if _, err := r.Push(ctx, cache, missing, noCred, PushAdditive, false); err == nil {
+		t.Fatal("pushing to a nonexistent destination must return an error")
+	}
+}
+
 func TestParsePushMode(t *testing.T) {
 	for _, s := range []string{"mirror", "additive", "fast-forward"} {
 		if _, err := ParsePushMode(s); err != nil {
@@ -265,6 +383,130 @@ func TestParsePushMode(t *testing.T) {
 	}
 }
 
-func writeFile(path, body string) error {
+func TestRejectsURLWithEmbeddedCredentials(t *testing.T) {
+	r := NewRunner(nil)
+	ctx := context.Background()
+	bad := "https://oauth2:sometoken@example.com/a/b.git"
+
+	if _, err := r.LsRemote(ctx, bad, noCred); err == nil {
+		t.Error("LsRemote must reject a URL with embedded credentials")
+	}
+	if err := r.SyncCache(ctx, bad, filepath.Join(t.TempDir(), "c.git"), noCred); err == nil {
+		t.Error("SyncCache must reject a URL with embedded credentials")
+	}
+	if _, err := r.Push(ctx, t.TempDir(), bad, noCred, PushAdditive, true); err == nil {
+		t.Error("Push must reject a URL with embedded credentials")
+	}
+}
+
+func TestParseGitVersion(t *testing.T) {
+	cases := map[string][2]int{
+		"git version 2.30.0\n":               {2, 30},
+		"git version 2.55.0":                 {2, 55},
+		"git version 2.39.3 (Apple Git-146)": {2, 39},
+	}
+	for out, want := range cases {
+		major, minor, err := parseGitVersion(out)
+		if err != nil {
+			t.Errorf("parseGitVersion(%q): %v", out, err)
+			continue
+		}
+		if major != want[0] || minor != want[1] {
+			t.Errorf("parseGitVersion(%q) = %d.%d, want %d.%d", out, major, minor, want[0], want[1])
+		}
+	}
+
+	for _, bad := range []string{"", "git", "git version", "git version x.y"} {
+		if _, _, err := parseGitVersion(bad); err == nil {
+			t.Errorf("parseGitVersion(%q) must fail", bad)
+		}
+	}
+}
+
+func TestParsePorcelain(t *testing.T) {
+	out := "To https://example.com/a/b.git\n" +
+		"*\trefs/heads/main:refs/heads/main\t[new branch]\n" +
+		" \trefs/heads/next:refs/heads/next\t1f7b4c3..a88df43\n" +
+		"+\trefs/heads/force:refs/heads/force\t29d1313...97548bf (forced update)\n" +
+		"=\trefs/tags/v1:refs/tags/v1\t[up to date]\n" +
+		"-\t:refs/heads/gone\t[deleted]\n" +
+		"Done\n"
+
+	res := parsePorcelain(out)
+	if res.Pushed != 3 {
+		t.Errorf("Pushed = %d, want 3", res.Pushed)
+	}
+	if res.Deleted != 1 {
+		t.Errorf("Deleted = %d, want 1", res.Deleted)
+	}
+}
+
+func TestParsePorcelainDoesNotCountRejected(t *testing.T) {
+	out := "To https://example.com/a/b.git\n" +
+		"!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\n" +
+		"Done\n"
+
+	res := parsePorcelain(out)
+	if res.Pushed != 0 || res.Deleted != 0 {
+		t.Errorf("a rejected ref must not count as pushed or deleted, got %+v", res)
+	}
+}
+
+func TestCredEnvKeepsSecretsOutOfConfigCount(t *testing.T) {
+	basic := credEnv(vcs.GitCredential{Kind: vcs.CredBasic, User: "x-access-token", Secret: "ghp_supersecret"}, "https://github.com/a/b.git")
+
+	var count string
+	keys := 0
+	for _, kv := range basic {
+		switch {
+		case strings.HasPrefix(kv, "GIT_CONFIG_COUNT="):
+			count = strings.TrimPrefix(kv, "GIT_CONFIG_COUNT=")
+		case strings.HasPrefix(kv, "GIT_CONFIG_KEY_"):
+			keys++
+		}
+	}
+	if count != "3" || keys != 3 {
+		t.Errorf("GIT_CONFIG_COUNT = %q with %d keys; count must match the number of keys", count, keys)
+	}
+
+	// The secret may appear only as an env value git reads by reference.
+	joined := strings.Join(basic, "\n")
+	if !strings.Contains(joined, "SYNCERD_GIT_SECRET=ghp_supersecret") {
+		t.Error("secret must be passed through the environment")
+	}
+	if strings.Contains(joined, "GIT_CONFIG_VALUE_1=ghp_supersecret") {
+		t.Error("secret must not be inlined into a config value")
+	}
+}
+
+func TestCredEnvScopesBearerHeaderToHost(t *testing.T) {
+	env := credEnv(vcs.GitCredential{Kind: vcs.CredBearer, Secret: "entra-token-value"}, "https://dev.azure.com/org/proj/_git/repo")
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GIT_CONFIG_KEY_0=http.https://dev.azure.com/.extraHeader") {
+		t.Errorf("bearer header must be scoped to the host, got:\n%s", joined)
+	}
+}
+
+func TestCredEnvWithoutCredentialClearsInheritedConfig(t *testing.T) {
+	env := credEnv(vcs.GitCredential{}, "https://example.com/a/b.git")
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GIT_CONFIG_COUNT=0") {
+		t.Errorf("an empty credential must clear inherited GIT_CONFIG, got:\n%s", joined)
+	}
+}
+
+func TestValidateCredentialRejectsNewline(t *testing.T) {
+	if err := validateCredential(vcs.GitCredential{Secret: "good\nquit=1"}); err == nil {
+		t.Error("a secret containing a newline must be rejected")
+	}
+	if err := validateCredential(vcs.GitCredential{User: "bad\nuser", Secret: "fine"}); err == nil {
+		t.Error("a username containing a newline must be rejected")
+	}
+	if err := validateCredential(vcs.GitCredential{User: "x-access-token", Secret: "ghp_fine"}); err != nil {
+		t.Errorf("a clean credential must be accepted, got %v", err)
+	}
+}
+
+func testWriteFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o600)
 }
