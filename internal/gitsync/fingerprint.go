@@ -37,17 +37,18 @@ func ParseLsRemote(out string) ([]Ref, error) {
 
 // Fingerprint hashes a ref set so an unchanged repository can be skipped
 // without cloning. Sorting makes the result independent of server ordering.
+// Each field is length prefixed rather than delimiter joined, so no field
+// content can make two different ref sets hash the same way.
 func Fingerprint(refs []Ref) string {
 	lines := make([]string, 0, len(refs))
 	for _, r := range refs {
-		lines = append(lines, r.SHA+"\t"+r.Name)
+		lines = append(lines, fmt.Sprintf("%d:%s%d:%s", len(r.SHA), r.SHA, len(r.Name), r.Name))
 	}
 	sort.Strings(lines)
 
 	h := sha256.New()
 	for _, l := range lines {
 		h.Write([]byte(l))
-		h.Write([]byte("\n"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

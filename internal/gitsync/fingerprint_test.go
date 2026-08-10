@@ -89,3 +89,30 @@ func TestFingerprintIsStable(t *testing.T) {
 		t.Fatal("fingerprint must be deterministic")
 	}
 }
+
+func TestFingerprintIsInjectiveAcrossFieldBoundary(t *testing.T) {
+	// Without length prefixing these two distinct ref sets serialize to the
+	// same bytes and collide.
+	a := []Ref{{SHA: "aaa", Name: "x\ty"}}
+	b := []Ref{{SHA: "aaa\tx", Name: "y"}}
+	if Fingerprint(a) == Fingerprint(b) {
+		t.Fatal("distinct ref sets must not share a fingerprint")
+	}
+}
+
+func TestParseLsRemoteKeepsTabsInRefName(t *testing.T) {
+	// git cuts at the first tab, so any later tab belongs to the ref name.
+	refs, err := ParseLsRemote("aabbcc\trefs/heads/odd\tname\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	if refs[0].SHA != "aabbcc" {
+		t.Errorf("SHA = %q, want aabbcc", refs[0].SHA)
+	}
+	if refs[0].Name != "refs/heads/odd\tname" {
+		t.Errorf("Name = %q, want the full remainder including the tab", refs[0].Name)
+	}
+}
