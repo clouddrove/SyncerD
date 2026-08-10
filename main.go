@@ -46,6 +46,10 @@ It can monitor for new versions and automatically sync them on a schedule.`,
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
+			if err := cfg.ValidateImageSync(); err != nil {
+				return err
+			}
+
 			syncer, err := sync.NewSyncer(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to create syncer: %w", err)

@@ -115,15 +115,12 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	// Validate config
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
 	return &cfg, nil
 }
 
-func (c *Config) Validate() error {
+// ValidateImageSync checks the configuration required by the "sync" command.
+// Git mirroring has its own validator; see ValidateGitSync.
+func (c *Config) ValidateImageSync() error {
 	if c.Source.Type == "" {
 		return fmt.Errorf("source.type is required")
 	}
