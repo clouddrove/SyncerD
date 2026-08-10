@@ -57,6 +57,29 @@ func TestRedactorAdd(t *testing.T) {
 	}
 }
 
+func TestRedactPrefersLongestSecret(t *testing.T) {
+	// A secret that is a prefix of another must not consume the common
+	// prefix and leave the longer secret's remainder behind.
+	for _, order := range [][]string{
+		{"token1", "token1XYZsecretstuff"},
+		{"token1XYZsecretstuff", "token1"},
+	} {
+		r := NewRedactor(order...)
+		got := r.Redact("value=token1XYZsecretstuff end")
+		if got != "value=[REDACTED] end" {
+			t.Errorf("registration order %v: got %q, want the whole secret redacted", order, got)
+		}
+	}
+}
+
+func TestRedactorAddNilSafe(t *testing.T) {
+	var r *Redactor
+	r.Add("some-long-secret")
+	if got := r.Redact("some-long-secret"); got != "some-long-secret" {
+		t.Errorf("nil redactor must pass through, got %q", got)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(needle) > 0 && len(haystack) >= len(needle) &&
 		func() bool {
