@@ -348,8 +348,22 @@ func validateCredential(cred vcs.GitCredential) error {
 // inherited helper chain is reset first so a global credential helper
 // cannot answer ahead of us, and so git does not hand the token to an OS
 // keychain or to ~/.git-credentials when the push succeeds.
+//
+// GIT_CONFIG_GLOBAL is set alongside GIT_CONFIG_NOSYSTEM so a developer
+// or container image with a populated ~/.gitconfig cannot inject its own
+// configuration into our git invocations. This matters most on the
+// bearer credential path: an inherited http.extraHeader would apply
+// alongside, or instead of, the Authorization header SyncerD sets, and
+// would travel to whatever provider that stray header targets. Git's own
+// documentation for GIT_CONFIG_GLOBAL states it "can be set to /dev/null
+// to skip reading configuration files of the respective level", with no
+// platform qualifier, and Git for Windows is itself an MSYS2 program
+// whose runtime treats "/dev/null" as the NUL device independent of the
+// argv/env path translation that only applies to arguments handed to
+// non-MSYS programs, so /dev/null is used unconditionally rather than
+// gating on GOOS.
 func credEnv(cred vcs.GitCredential, remoteURL string) []string {
-	env := []string{"GIT_CONFIG_NOSYSTEM=1"}
+	env := []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
 
 	switch {
 	case cred.Kind == vcs.CredBearer && cred.Secret != "":
