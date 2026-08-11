@@ -73,7 +73,7 @@ gitSync:
   # "gh" reads SYNCERD_GIT_GH_TOKEN (and, if needed, SYNCERD_GIT_GH_GIT_USERNAME
   # / SYNCERD_GIT_GH_GIT_PASSWORD for CodeCommit's static credential fallback).
   providers: []
-  # Example:
+  # Example, all five supported provider types:
   # providers:
   #   - name: gh
   #     type: github
@@ -81,6 +81,20 @@ gitSync:
   #   - name: gl
   #     type: gitlab
   #     owner: my-group
+  #   - name: bb
+  #     type: bitbucket
+  #     owner: my-workspace
+  #     email: svc@example.com  # required: API tokens authenticate with the account email
+  #   - name: ado
+  #     type: azuredevops
+  #     owner: my-ado-org
+  #     project: my-ado-project  # required: repositories live inside a project
+  #     # auth: entra           # default is "pat"; "entra" presents an operator supplied Entra ID access token
+  #   - name: cc
+  #     type: codecommit
+  #     region: us-east-1  # required; CodeCommit has no owner, repository names are flat within an account and region
+  #     # git_username / git_password: static IAM HTTPS Git credentials, needed because SyncerD does not derive
+  #     # SigV4 git credentials; set via secret.gitCredentials or existingSecret, never here
 
   mirrors: []
   # Example:
@@ -148,8 +162,11 @@ secret:
   #   gh: "ghp_..."
   #   gl: "glpat-..."
   gitTokens: {}
-  # Git HTTPS credential pairs, keyed by provider name. Used only by
-  # CodeCommit's static credential fallback. Prefer existingSecret.
+  # Git HTTPS credential pairs, keyed by provider name. This is CodeCommit's
+  # intended git transport credential: SyncerD does not derive SigV4 git
+  # credentials, so a static IAM HTTPS Git credential pair is how a
+  # CodeCommit provider authenticates git push and clone, even when the API
+  # half authenticates via IRSA or an instance role. Prefer existingSecret.
   # gitCredentials:
   #   cc:
   #     username: "..."

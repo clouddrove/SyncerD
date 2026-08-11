@@ -74,9 +74,10 @@ slack:
 fail_fast: false # false = best-effort per image/tag; true = stop on first error
 
 # Git repository mirroring (syncerd git-sync). Optional, separate from image
-# sync above. Uncomment and adjust to mirror repositories between GitHub and
-# GitLab. Tokens are NOT set here; export them as environment variables named
-# after the provider (see below).
+# sync above. Uncomment and adjust to mirror repositories across GitHub,
+# GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, in any direction.
+# Tokens and other secrets are NOT set here; export them as environment
+# variables named after the provider (see below).
 # git:
 #   providers:
 #     - name: gh
@@ -87,6 +88,24 @@ fail_fast: false # false = best-effort per image/tag; true = stop on first error
 #       type: gitlab
 #       owner: your-gitlab-group
 #       # token: set via SYNCERD_GIT_GL_TOKEN, not here
+#     - name: bb
+#       type: bitbucket
+#       owner: your-bitbucket-workspace
+#       email: your-account-email@example.com  # required: API tokens authenticate with the account email
+#       # token: set via SYNCERD_GIT_BB_TOKEN, not here
+#     - name: ado
+#       type: azuredevops
+#       owner: your-ado-organization
+#       project: your-ado-project  # required: repositories live inside a project
+#       # auth: pat            # default; or "entra" to present an operator supplied Entra ID access token
+#       # token: set via SYNCERD_GIT_ADO_TOKEN, not here (either a PAT or, in entra mode, an Entra access token)
+#     - name: cc
+#       type: codecommit
+#       region: us-east-1  # required; CodeCommit has no owner, repository names are flat within an account and region
+#       # API access resolves through the standard AWS credential chain (env, shared config, IRSA, instance role).
+#       # The git transport needs static IAM HTTPS Git credentials, since SyncerD does not derive SigV4 ones:
+#       # git_username: set via SYNCERD_GIT_CC_GIT_USERNAME, not here
+#       # git_password: set via SYNCERD_GIT_CC_GIT_PASSWORD, not here
 #
 #   mirrors:
 #     - name: gh-to-gl

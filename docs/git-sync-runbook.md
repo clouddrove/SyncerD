@@ -515,7 +515,7 @@ interval the next tick is skipped rather than started concurrently.
 | `refusing a mirror push from an empty cache` | source resolved to zero refs | check the source repo and token; this guard stops a full destination wipe |
 | `cannot inspect destination and create_missing is off` | destination unreachable | fix credentials or network; the tool fails closed rather than pushing blind |
 | `source repositories "a" and "b" both render to destination "x"` | two sources collide under `name_template` | make the template produce distinct names |
-| `provider "bb" has unsupported type "bitbucket"` | type validates but is not implemented yet | only `github` and `gitlab` work today |
+| `provider "x" has unsupported type "..."` | the type string is not one of the five registered types | use `github`, `gitlab`, `bitbucket`, `azuredevops`, or `codecommit` |
 | Everything skipped, nothing mirrored | fingerprints match | expected; delete the state file to force a full pass |
 | Every repo fails the adopt guard on run two | state file was lost between runs | see `state_path` below |
 
@@ -550,14 +550,23 @@ fingerprints for repositories it already pushed, producing the same adopt guard
 storm on the next run. Recover by setting `adopt: true` for one run, then
 removing it. Incremental saving is a known follow-up.
 
-**Three provider types validate but do not run.** `bitbucket`, `azuredevops`,
-and `codecommit` pass config validation, including their type-specific field
-checks, then fail at startup with an unsupported type error. They arrive in P4.
+**All five provider types run.** `github`, `gitlab`, `bitbucket`, `azuredevops`,
+and `codecommit` all construct and mirror successfully; any of them can be a
+source or a destination. Three real, permanent limitations remain, so a
+config that looks valid can still fail at the credential or network step:
 
-**Only GitHub and GitLab are implemented.** `syncerd --help` lists all five
-provider types, but Bitbucket, Azure DevOps, and AWS CodeCommit pass config
-validation and then fail at startup with an unsupported type error. Still
-worth knowing before you build a config around one of them.
+- **CodeCommit**: SyncerD does not derive SigV4 git credentials, so IRSA and
+  instance roles cover listing and creating repositories, but the git
+  transport needs static IAM HTTPS Git credentials (`git_username` /
+  `git_password`, or `SYNCERD_GIT_<NAME>_GIT_USERNAME` /
+  `SYNCERD_GIT_<NAME>_GIT_PASSWORD`), which are only issuable to an IAM user.
+- **Azure DevOps Entra mode**: the operator supplies the access token;
+  SyncerD does not acquire one from Azure AD. It is supplied through the
+  same `SYNCERD_GIT_<NAME>_TOKEN` variable used for a PAT.
+- **Bitbucket**: Cloud only. The `api_url` override changes the host but the
+  request paths are Cloud shaped, so Bitbucket Data Center is not supported.
+  Bitbucket also has no archived concept, so `skip_archived` has no effect
+  for a Bitbucket source.
 
 **Released binaries need git on PATH.** goreleaser ships a bare binary with
 no bundled git; install git 2.30 or newer on any host that runs a release

@@ -146,7 +146,7 @@ kubectl create secret generic syncerd-docker-config \
 
 ## Git mirroring
 
-The chart can also run `syncerd git-sync` as a **second, independent CronJob**, so it can keep its own schedule apart from image sync. Disabled by default.
+The chart can also run `syncerd git-sync` as a **second, independent CronJob**, so it can keep its own schedule apart from image sync. Disabled by default. All five provider types are supported: GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, and any of them can be a source or a destination.
 
 | Key | Description | Default |
 |-----|-------------|---------|
@@ -169,7 +169,15 @@ The chart can also run `syncerd git-sync` as a **second, independent CronJob**, 
 
 ### Git provider credentials
 
-Provider tokens, and the CodeCommit static credential fallback, are never written to the ConfigMap. They are read from a Secret as environment variables named `SYNCERD_GIT_<KEY>_TOKEN`, `SYNCERD_GIT_<KEY>_GIT_USERNAME`, and `SYNCERD_GIT_<KEY>_GIT_PASSWORD`, where `<KEY>` is derived from the provider's `name` in `gitSync.providers`: upper cased, with every non-alphanumeric character replaced by underscore. A provider named `gh` reads `SYNCERD_GIT_GH_TOKEN`; a provider named `gh-mirrors` reads `SYNCERD_GIT_GH_MIRRORS_TOKEN`.
+Provider tokens and git credentials are never written to the ConfigMap. They are read from a Secret as environment variables named `SYNCERD_GIT_<KEY>_TOKEN`, `SYNCERD_GIT_<KEY>_GIT_USERNAME`, and `SYNCERD_GIT_<KEY>_GIT_PASSWORD`, where `<KEY>` is derived from the provider's `name` in `gitSync.providers`: upper cased, with every non-alphanumeric character replaced by underscore. A provider named `gh` reads `SYNCERD_GIT_GH_TOKEN`; a provider named `gh-mirrors` reads `SYNCERD_GIT_GH_MIRRORS_TOKEN`.
+
+| Provider | Secret key(s) it reads |
+|---|---|
+| GitHub | `SYNCERD_GIT_<KEY>_TOKEN` (PAT) |
+| GitLab | `SYNCERD_GIT_<KEY>_TOKEN` (group access token) |
+| Bitbucket | `SYNCERD_GIT_<KEY>_TOKEN` (API token; the username is the `email` set in `gitSync.providers`, not a secret) |
+| Azure DevOps | `SYNCERD_GIT_<KEY>_TOKEN` (org-scoped PAT, or an operator supplied Entra ID access token when `auth: entra`) |
+| AWS CodeCommit | `SYNCERD_GIT_<KEY>_GIT_USERNAME` and `SYNCERD_GIT_<KEY>_GIT_PASSWORD` (static IAM HTTPS Git credentials for the git transport); the API half authenticates via IRSA, an instance role, or the standard AWS credential chain, not a secret here |
 
 Set them with `existingSecret` (recommended) or inline via `secret.gitTokens` / `secret.gitCredentials`:
 
@@ -190,13 +198,23 @@ secret:
   gitTokens:
     gh: "ghp_your_token"
     gl: "glpat-your_token"
-  # gitCredentials keys map to SYNCERD_GIT_<KEY>_GIT_USERNAME / _GIT_PASSWORD,
-  # used only by CodeCommit's static credential fallback:
+  # gitCredentials keys map to SYNCERD_GIT_<KEY>_GIT_USERNAME / _GIT_PASSWORD.
+  # This is CodeCommit's intended git transport credential, not a future or
+  # optional one: SyncerD does not derive SigV4 git credentials, so a
+  # static IAM HTTPS Git credential pair is how a CodeCommit provider
+  # authenticates git push and clone, even when the API half authenticates
+  # via IRSA or an instance role.
   # gitCredentials:
   #   cc:
   #     username: "..."
   #     password: "..."
 ```
+
+### Limitations
+
+- **CodeCommit**: SyncerD does not derive SigV4 git credentials, so IRSA and instance roles cover listing and creating repositories but the git transport needs static IAM HTTPS Git credentials, set via `secret.gitCredentials` or `existingSecret`.
+- **Azure DevOps Entra mode**: the operator supplies the access token; SyncerD does not acquire one from Azure AD. Set `auth: entra` on the provider and supply the token through the same `SYNCERD_GIT_<KEY>_TOKEN` key used for a PAT.
+- **Bitbucket**: Cloud only. The `api_url` override changes the host but the request paths are Cloud shaped, so Bitbucket Data Center is not supported. Bitbucket also has no archived concept, so `skip_archived` has no effect for a Bitbucket source.
 
 ### Minimal example
 

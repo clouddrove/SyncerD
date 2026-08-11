@@ -7,7 +7,7 @@
   <strong>Your lightweight Docker registry and git repository sync engine.</strong>
 </p>
 <p align="center">
-  Sync images from Docker Hub to ECR, ACR, GCR & GHCR, and mirror git repositories between GitHub and GitLab. Beat rate limits, run anywhere.
+  Sync images from Docker Hub to ECR, ACR, GCR & GHCR, and mirror git repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit. Beat rate limits, run anywhere.
 </p>
 
 <p align="center">
@@ -22,12 +22,12 @@
 
 ## Why SyncerD?
 
-Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limit/) can block pulls in CI and production. **SyncerD** copies images from Docker Hub to your own registries (AWS ECR, Azure ACR, Google GCR, GitHub Container Registry) so you pull from your registry instead — no rate-limit headaches, same images. SyncerD also mirrors git repositories between GitHub and GitLab, so a backup or internal copy of your repos stays in sync on its own schedule.
+Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limit/) can block pulls in CI and production. **SyncerD** copies images from Docker Hub to your own registries (AWS ECR, Azure ACR, Google GCR, GitHub Container Registry) so you pull from your registry instead — no rate-limit headaches, same images. SyncerD also mirrors git repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, so a backup or internal copy of your repos stays in sync on its own schedule.
 
 - **One config, many registries** — Sync the same set of images to ECR, ACR, GCR, and GHCR from a single YAML.
 - **Runs everywhere** — CLI, GitHub Actions, Kubernetes (Helm CronJob). Stateless by default; no DB required.
 - **New tags, automatically** — Watches source tags and syncs only what's missing; optional branded Slack alerts (color-coded Block Kit) on new syncs or failures.
-- **Git mirroring**: Mirror repositories between GitHub and GitLab with filtered discovery, safe push modes, and a guard against overwriting a destination that already has content. See [Git mirroring](#git-mirroring).
+- **Git mirroring**: Mirror repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit with filtered discovery, safe push modes, and a guard against overwriting a destination that already has content. See [Git mirroring](#git-mirroring).
 
 ---
 
@@ -94,7 +94,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Helm chart** | Run as a CronJob on Kubernetes; stateless by default (no PVC) |
 | **Slack** | Optional branded Block Kit alerts (color-coded, per-destination grouping) on new syncs and failures (compact/detailed) |
 | **Secure** | Docker Hub via env/secret; destinations via Docker credential config |
-| **Git mirroring** | Mirror repositories between GitHub and GitLab (`git-sync`); filtered discovery, safe push modes, dry run |
+| **Git mirroring** | Mirror repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit (`git-sync`); filtered discovery, safe push modes, dry run |
 
 ---
 
@@ -224,7 +224,27 @@ Override with `SYNCERD_` prefix:
 
 ## Git mirroring
 
-`syncerd git-sync` mirrors git repositories between hosting providers, replicating branches and tags as a full mirror in either direction. GitHub and GitLab are supported today; Bitbucket, Azure DevOps, and AWS CodeCommit are planned.
+`syncerd git-sync` mirrors git repositories between hosting providers, replicating branches and tags as a full mirror in either direction. All five provider types are supported: GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, and any of them can be a source or a destination.
+
+**Providers:**
+
+| `type` | What `owner` means | Provider-specific required field |
+|---|---|---|
+| `github` | Organization (or user) | none |
+| `gitlab` | Group | none |
+| `bitbucket` | Workspace | `email` (account email; used as the git and API username) |
+| `azuredevops` | Organization | `project` (repositories live inside a project) |
+| `codecommit` | not applicable; CodeCommit repository names are flat within an account and region | `region` |
+
+**Authentication:**
+
+| Provider | How it authenticates |
+|---|---|
+| GitHub | Personal access token |
+| GitLab | Group access token |
+| Bitbucket | API token, with the account email as the username |
+| Azure DevOps | Organization-scoped PAT (default), or an Entra ID access token in `entra` mode |
+| CodeCommit | IAM (via IRSA, an instance role, or the standard AWS credential chain) for the API; static IAM HTTPS Git credentials for the git transport |
 
 **Minimal config:**
 
@@ -269,6 +289,12 @@ export SYNCERD_GIT_GL_TOKEN=your-gitlab-token
 **Adopt guard:** a mirror refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in once you've confirmed the destination is right.
 
 Run with `--dry-run` to print the ref changes each mirror would make, per repository, without creating, pushing, or deleting anything.
+
+**Limitations:**
+
+- **CodeCommit**: SyncerD does not derive SigV4 git credentials, so IRSA and instance roles cover listing and creating repositories but the git transport needs static IAM HTTPS Git credentials, which are only issuable to an IAM user. Set `git_username` and `git_password` on the provider (or `SYNCERD_GIT_<NAME>_GIT_USERNAME` / `SYNCERD_GIT_<NAME>_GIT_PASSWORD`).
+- **Azure DevOps Entra mode**: the operator supplies the access token; SyncerD does not acquire one from Azure AD. Set `auth: entra` on the provider and supply the token through the same `SYNCERD_GIT_<NAME>_TOKEN` variable used for a PAT.
+- **Bitbucket**: Cloud only. The `api_url` override changes the host but the request paths are Cloud shaped, so Bitbucket Data Center is not supported. Bitbucket also has no archived concept, so `skip_archived` has no effect for a Bitbucket source.
 
 For the full local test procedure, including config validation, idempotency, pruning, the adopt guard, and Slack, see [docs/git-sync-runbook.md](docs/git-sync-runbook.md).
 

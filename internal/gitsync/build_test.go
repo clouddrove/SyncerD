@@ -78,18 +78,74 @@ func TestBuildMirrors(t *testing.T) {
 
 func TestBuildMirrorsRejectsUnimplementedProvider(t *testing.T) {
 	g := buildableConfig()
+	// "gitea" is not, and has never been, registered: config validation does
+	// not gate provider types reaching BuildMirrors in a test, only the
+	// registry does, so this fixture proves the registry's own "unsupported
+	// type" reporting still works, independent of which types happen to be
+	// implemented today.
 	g.Providers = append(g.Providers, config.GitProviderConfig{
-		Name: "cc", Type: "codecommit", Region: "us-east-1",
+		Name: "gt", Type: "gitea", Owner: "acme", Token: "gitea_token_value",
 	})
-	g.Mirrors = append(g.Mirrors, config.MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
+	g.Mirrors = append(g.Mirrors, config.MirrorConfig{Name: "gh-to-gt", Source: "gh", Destination: "gt"})
 	g.ApplyDefaults()
 
 	_, _, err := BuildMirrors(g)
 	if err == nil {
-		t.Fatal("expected an error for a provider type with no implementation yet")
+		t.Fatal("expected an error for a provider type with no implementation")
 	}
-	if !strings.Contains(err.Error(), "codecommit") {
+	if !strings.Contains(err.Error(), "gitea") {
 		t.Errorf("error should name the type, got %v", err)
+	}
+}
+
+func TestBuildMirrorsBuildsBitbucket(t *testing.T) {
+	g := buildableConfig()
+	g.Providers = append(g.Providers, config.GitProviderConfig{
+		Name: "bb", Type: "bitbucket", Owner: "my-workspace", Email: "svc@example.com", Token: "bb_token_value",
+	})
+	g.Mirrors = append(g.Mirrors, config.MirrorConfig{Name: "gh-to-bb", Source: "gh", Destination: "bb"})
+	g.ApplyDefaults()
+
+	mirrors, _, err := BuildMirrors(g)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(mirrors) != 2 {
+		t.Fatalf("got %d mirrors, want 2", len(mirrors))
+	}
+}
+
+func TestBuildMirrorsBuildsAzureDevOps(t *testing.T) {
+	g := buildableConfig()
+	g.Providers = append(g.Providers, config.GitProviderConfig{
+		Name: "ado", Type: "azuredevops", Owner: "my-org", Project: "my-project", Token: "ado_token_value",
+	})
+	g.Mirrors = append(g.Mirrors, config.MirrorConfig{Name: "gh-to-ado", Source: "gh", Destination: "ado"})
+	g.ApplyDefaults()
+
+	mirrors, _, err := BuildMirrors(g)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(mirrors) != 2 {
+		t.Fatalf("got %d mirrors, want 2", len(mirrors))
+	}
+}
+
+func TestBuildMirrorsBuildsCodeCommit(t *testing.T) {
+	g := buildableConfig()
+	g.Providers = append(g.Providers, config.GitProviderConfig{
+		Name: "cc", Type: "codecommit", Region: "us-east-1", GitUsername: "cc-git-user", GitPassword: "cc-git-password",
+	})
+	g.Mirrors = append(g.Mirrors, config.MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
+	g.ApplyDefaults()
+
+	mirrors, _, err := BuildMirrors(g)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(mirrors) != 2 {
+		t.Fatalf("got %d mirrors, want 2", len(mirrors))
 	}
 }
 
@@ -126,22 +182,23 @@ func TestBuildMirrorsRejectsNestedNameForFlatDestination(t *testing.T) {
 }
 
 // TestBuildMirrorsRejectsDestinationThatCannotCreate is deliberately not
-// implemented: both providers BuildMirrors can construct today, github and
-// gitlab, satisfy vcs.Ensurer, so there is no configuration BuildMirrors can
-// be given that reaches the "cannot create repositories" branch without a
-// fake provider. BuildMirrors takes config, not constructed providers, so
-// forcing the path would mean inventing a provider type that does not exist
-// in the registry, which contradicts what the branch actually guards. Once a
-// provider without EnsureRepo lands, this path becomes reachable and should
-// be covered then.
+// implemented: every provider type in the registry, github, gitlab,
+// bitbucket, azuredevops, and codecommit, satisfies vcs.Ensurer, so there is
+// no configuration BuildMirrors can be given that reaches the "cannot
+// create repositories" branch without a fake provider. BuildMirrors takes
+// config, not constructed providers, so forcing the path would mean
+// inventing a provider type that does not exist in the registry, which
+// contradicts what the branch actually guards. Once a provider without
+// EnsureRepo lands, this path becomes reachable and should be covered then.
 
 func TestBuildMirrorsUnreferencedProviderNotBuilt(t *testing.T) {
 	g := buildableConfig()
-	// A provider of an unimplemented type that no mirror references must
-	// not block startup: BuildMirrors only constructs providers a mirror
-	// actually names.
+	// A provider of a type with no registry entry, and that no mirror
+	// references, must not block startup: BuildMirrors only constructs
+	// providers a mirror actually names, so it never reaches the registry
+	// for this one.
 	g.Providers = append(g.Providers, config.GitProviderConfig{
-		Name: "unused-cc", Type: "codecommit", Region: "us-east-1",
+		Name: "unused-gt", Type: "gitea", Owner: "acme", Token: "gitea_token_value",
 	})
 	g.ApplyDefaults()
 

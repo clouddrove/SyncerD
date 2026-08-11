@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- New `syncerd git-sync` subcommand mirrors git repositories between GitHub and GitLab (Bitbucket, Azure DevOps, and AWS CodeCommit are planned but not yet supported). Repositories are discovered from the source provider and filtered by name glob, archived, and fork status; unchanged repositories are detected via a source ref fingerprint and skipped without cloning
+- New `syncerd git-sync` subcommand mirrors git repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, in any direction. Repositories are discovered from the source provider and filtered by name glob, archived, and fork status; unchanged repositories are detected via a source ref fingerprint and skipped without cloning
+- CodeCommit's git transport needs static IAM HTTPS Git credentials (`git_username` / `git_password`, or `SYNCERD_GIT_<NAME>_GIT_USERNAME` / `SYNCERD_GIT_<NAME>_GIT_PASSWORD`): SyncerD does not derive SigV4 git credentials, so IRSA and instance roles only cover the API (listing and creating repositories)
+- Azure DevOps supports an `entra` auth mode where the operator supplies a Microsoft Entra ID access token through the same `SYNCERD_GIT_<NAME>_TOKEN` variable used for a PAT; SyncerD never acquires one itself
+- Bitbucket support is Cloud only (`api_url` changes the host but not the Cloud shaped request paths, so Bitbucket Data Center is not supported), and Bitbucket has no archived concept, so `skip_archived` has no effect on a Bitbucket source
 - Three push modes control how a mirror updates its destination: `mirror` (default) replicates the source exactly, deleting destination branches and tags absent at source; `additive` never deletes; `fast-forward` refuses any non fast-forward update and reports it as a failure
 - An adopt guard refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in
 - `--dry-run` reports what would be created, pushed, and pruned, per repository and per ref; it creates, pushes, and deletes nothing at the destination, though it does populate the local clone cache, since `git push --dry-run` needs the objects available locally
