@@ -159,13 +159,18 @@ func runWithCron(cfg *config.Config, syncer *sync.Syncer) error {
 }
 
 func runGitCron(cfg *config.Config, syncer *gitsync.Syncer) error {
-	c := cron.New(cron.WithLocation(time.UTC))
+	// Skip a tick rather than start a second run on the same Engine. A
+	// first mirror of a large org can outlive its own interval, and Run
+	// keeps per run state on the receiver, so an overlapping run would
+	// reset that state mid flight.
+	c := cron.New(
+		cron.WithLocation(time.UTC),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
+	)
 
-	log.Println("Running initial git mirror...")
-	if _, err := syncer.SyncAll(context.Background()); err != nil {
-		log.Printf("Initial git mirror error: %v", err)
-	}
-
+	// Validate the schedule before spending a full mirror run, so a typo
+	// in git.schedule is caught immediately instead of after the first run
+	// completes.
 	_, err := c.AddFunc(cfg.Git.Schedule, func() {
 		log.Println("Running scheduled git mirror...")
 		if _, err := syncer.SyncAll(context.Background()); err != nil {
@@ -174,6 +179,11 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer) error {
 	})
 	if err != nil {
 		return fmt.Errorf("invalid git cron schedule: %w", err)
+	}
+
+	log.Println("Running initial git mirror...")
+	if _, err := syncer.SyncAll(context.Background()); err != nil {
+		log.Printf("Initial git mirror error: %v", err)
 	}
 
 	c.Start()

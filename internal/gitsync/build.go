@@ -52,13 +52,29 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 	}
 
 	registry := newRegistry()
+	// The redactor is primed from every configured secret, not only the
+	// ones referenced by a mirror below, since an unreferenced secret in
+	// the config is still a secret worth redacting if it somehow appears
+	// in output.
 	redactor := NewRedactor(cfg.Secrets()...)
 
-	built := make(map[string]vcs.Provider, len(cfg.Providers))
+	// Only construct providers a mirror actually references. A config that
+	// declares a provider for later use, or as a spare, must not block
+	// startup just because that provider's type has no implementation yet.
+	referenced := make(map[string]bool, len(cfg.Mirrors)*2)
+	for _, mc := range cfg.Mirrors {
+		referenced[mc.Source] = true
+		referenced[mc.Destination] = true
+	}
+
+	built := make(map[string]vcs.Provider, len(referenced))
 	for _, pc := range cfg.Providers {
+		if !referenced[pc.Name] {
+			continue
+		}
 		p, err := registry.Build(toProviderConfig(pc))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("git.providers %q: %w", pc.Name, err)
 		}
 		built[pc.Name] = p
 	}
@@ -129,6 +145,7 @@ type Syncer struct {
 	engine  *Engine
 	mirrors []Mirror
 	slack   *notify.SlackClient
+	dryRun  bool
 }
 
 // NewSyncer builds every provider and prepares the engine.
@@ -164,7 +181,7 @@ func NewSyncer(cfg *config.Config, dryRun bool) (*Syncer, error) {
 		}
 	}
 
-	return &Syncer{cfg: cfg, engine: engine, mirrors: mirrors, slack: slackClient}, nil
+	return &Syncer{cfg: cfg, engine: engine, mirrors: mirrors, slack: slackClient, dryRun: dryRun}, nil
 }
 
 // SyncAll runs every mirror and sends Slack notifications, best effort.
@@ -175,7 +192,10 @@ func (s *Syncer) SyncAll(ctx context.Context) (*GitReport, error) {
 		rep.EndedAt.Sub(rep.StartedAt).Round(time.Second),
 		len(rep.Mirrored), rep.Skipped, len(rep.Failures))
 
-	if s.slack != nil {
+	// A dry run reports to the operator through the log, never to Slack.
+	// Its report describes what would happen, and posting that as a
+	// success would be a lie.
+	if s.slack != nil && !s.dryRun {
 		detailed := s.cfg.Slack.MessageFormat == "detailed"
 		if s.cfg.Slack.NotifyOnNew && len(rep.Mirrored) > 0 {
 			_ = s.slack.Send(ctx, BuildMirroredMessage(rep, detailed))
