@@ -60,6 +60,43 @@ func TestListReposIncludesSubgroupsAndPaginates(t *testing.T) {
 	}
 }
 
+func TestListReposCarriesCloneURLFromAPI(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]any{
+			{"path": "first", "path_with_namespace": "acme/first", "default_branch": "main", "http_url_to_repo": "https://gitlab.example/acme/first.git"},
+		})
+	})
+
+	p := newProvider(t, mux)
+	repos, err := p.ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(repos) != 1 || repos[0].CloneURL != "https://gitlab.example/acme/first.git" {
+		t.Fatalf("CloneURL not carried through: %+v", repos)
+	}
+}
+
+func TestListReposFallsBackToComputedCloneURLWhenAPIOmitsIt(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]any{
+			{"path": "first", "path_with_namespace": "acme/first", "default_branch": "main"},
+		})
+	})
+
+	p := newProvider(t, mux)
+	repos, err := p.ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := p.base + "/acme/first.git"
+	if len(repos) != 1 || repos[0].CloneURL != want {
+		t.Fatalf("computed fallback CloneURL = %+v, want %q", repos, want)
+	}
+}
+
 func TestEnsureRepoLooksUpNamespaceThenCreates(t *testing.T) {
 	var created map[string]any
 	mux := http.NewServeMux()

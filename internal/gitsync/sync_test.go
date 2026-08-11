@@ -28,11 +28,15 @@ type fakeLister struct{ repos []vcs.Repo }
 
 func (f *fakeLister) ListRepos(context.Context) ([]vcs.Repo, error) { return f.repos, nil }
 
-// panicRemote panics when the engine asks for a clone URL, standing in for
-// any provider bug that would take down a worker.
+// panicRemote panics when the engine asks for a git credential, standing in
+// for any provider bug that would take down a worker. GitCredential is used
+// rather than CloneURL because the engine now sources a source repository's
+// clone URL from vcs.Repo rather than calling SourceRemote.CloneURL.
 type panicRemote struct{ fakeRemote }
 
-func (p *panicRemote) CloneURL(string) string { panic("provider exploded") }
+func (p *panicRemote) GitCredential(context.Context) (vcs.GitCredential, error) {
+	panic("provider exploded")
+}
 
 // fakeEnsurer records creations and initialises a bare repo on disk. The
 // engine's worker pool can call EnsureRepo from several goroutines at
@@ -63,8 +67,9 @@ func newEngineFixture(t *testing.T) (*Engine, Mirror, *fakeEnsurer) {
 
 	// A source repo named "app" under owner "acme", with one commit and a
 	// tag. The bare repo lives at the nested path matching Repo.Path
-	// ("acme/app"), since that is what the engine passes to
-	// SourceRemote.CloneURL when building the source clone URL.
+	// ("acme/app"); its CloneURL is set on the vcs.Repo below the same way
+	// a real provider's ListRepos would report it, since the engine now
+	// uses repo.CloneURL for the source rather than recomputing it.
 	work := filepath.Join(t.TempDir(), "work")
 	bare := filepath.Join(srcBase, "acme", "app.git")
 	git(t, srcBase, "init", "--bare", "--initial-branch=main", bare)
@@ -83,11 +88,14 @@ func newEngineFixture(t *testing.T) (*Engine, Mirror, *fakeEnsurer) {
 		t.Fatalf("template: %v", err)
 	}
 	ensurer := &fakeEnsurer{base: dstBase, t: t}
+	srcRemote := &fakeRemote{base: srcBase, nesting: true}
 
 	m := Mirror{
-		Name:          "fake",
-		Source:        &fakeLister{repos: []vcs.Repo{{Name: "app", Owner: "acme", Path: "acme/app", DefaultBranch: "main"}}},
-		SourceRemote:  &fakeRemote{base: srcBase, nesting: true},
+		Name: "fake",
+		Source: &fakeLister{repos: []vcs.Repo{
+			{Name: "app", Owner: "acme", Path: "acme/app", DefaultBranch: "main", CloneURL: srcRemote.CloneURL("acme/app")},
+		}},
+		SourceRemote:  srcRemote,
 		Dest:          &fakeRemote{base: dstBase, nesting: true},
 		DestEnsurer:   ensurer,
 		Names:         names,
@@ -237,13 +245,49 @@ func TestEngineAdoptOverwritesWhenOptedIn(t *testing.T) {
 	}
 }
 
+func TestEngineUsesRepoCloneURLForSource(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	// A source whose reported clone URL is wrong must fail at fetch rather
+	// than silently succeeding through a recomputed path.
+	m.Source = &fakeLister{repos: []vcs.Repo{
+		{Name: "app", Owner: "acme", Path: "acme/app", DefaultBranch: "main",
+			CloneURL: filepath.Join(t.TempDir(), "nowhere.git")},
+	}}
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err == nil {
+		t.Fatal("expected the run to fail when the source clone URL does not resolve")
+	}
+	if len(rep.Failures) != 1 || rep.Failures[0].Stage != "fetch" {
+		t.Fatalf("expected one fetch failure, got %+v", rep.Failures)
+	}
+}
+
+func TestEngineFailsWhenSourceReportsNoCloneURL(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+	m.Source = &fakeLister{repos: []vcs.Repo{
+		{Name: "app", Owner: "acme", Path: "acme/app", DefaultBranch: "main"},
+	}}
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err == nil {
+		t.Fatal("expected the run to fail when the source reports no clone URL")
+	}
+	if len(rep.Failures) != 1 || rep.Failures[0].Stage != "fetch" {
+		t.Fatalf("expected one fetch failure, got %+v", rep.Failures)
+	}
+}
+
 func TestEngineFailFastStopsOnFirstFailure(t *testing.T) {
 	eng, m, _ := newEngineFixture(t)
 	eng.opts.FailFast = true
 
-	// A source repo that does not exist on disk fails at the fetch stage.
+	// A source repo whose reported clone URL does not exist on disk fails
+	// at the fetch stage.
 	m.Source = &fakeLister{repos: []vcs.Repo{
-		{Name: "missing", Owner: "acme", Path: "acme/missing", DefaultBranch: "main"},
+		{Name: "missing", Owner: "acme", Path: "acme/missing", DefaultBranch: "main",
+			CloneURL: m.SourceRemote.CloneURL("acme/missing")},
 	}}
 
 	rep, err := eng.Run(context.Background(), []Mirror{m})
@@ -292,7 +336,7 @@ func TestEngineConcurrentReposDoNotRaceOnState(t *testing.T) {
 		git(t, work, "remote", "add", "origin", bare)
 		git(t, work, "push", "origin", "main")
 
-		repos = append(repos, vcs.Repo{Name: name, Owner: "acme", Path: "acme/" + name, DefaultBranch: "main"})
+		repos = append(repos, vcs.Repo{Name: name, Owner: "acme", Path: "acme/" + name, DefaultBranch: "main", CloneURL: bare})
 	}
 
 	m.Source = &fakeLister{repos: repos}

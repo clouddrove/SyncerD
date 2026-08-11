@@ -226,7 +226,12 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		e.fail(cancel, GitFailure{Mirror: m.Name, SourceRepo: repo.Path, Stage: "fetch", Error: e.redact(err.Error())})
 		return
 	}
-	srcURL := m.SourceRemote.CloneURL(repo.Path)
+	srcURL := repo.CloneURL
+	if srcURL == "" {
+		e.fail(cancel, GitFailure{Mirror: m.Name, SourceRepo: repo.Path, Stage: "fetch",
+			Error: "source provider did not report a clone URL for this repository"})
+		return
+	}
 
 	refs, err := e.opts.Runner.LsRemote(ctx, srcURL, srcCred)
 	if err != nil {

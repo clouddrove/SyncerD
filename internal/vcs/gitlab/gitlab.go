@@ -83,6 +83,7 @@ func (p *Provider) GitCredential(context.Context) (vcs.GitCredential, error) {
 type apiProject struct {
 	Path              string `json:"path"`
 	PathWithNamespace string `json:"path_with_namespace"`
+	HTTPURLToRepo     string `json:"http_url_to_repo"`
 	DefaultBranch     string `json:"default_branch"`
 	Archived          bool   `json:"archived"`
 	EmptyRepo         bool   `json:"empty_repo"`
@@ -91,15 +92,24 @@ type apiProject struct {
 	} `json:"forked_from_project"`
 }
 
-func (a apiProject) toRepo(owner string) vcs.Repo {
+// toRepo converts the API representation to vcs.Repo. base is used only as
+// a fallback to compose CloneURL when the API response omits
+// http_url_to_repo, since apiProject has no access to the Provider that
+// knows it.
+func (a apiProject) toRepo(owner, base string) vcs.Repo {
 	path := a.PathWithNamespace
 	if path == "" {
 		path = owner + "/" + a.Path
+	}
+	cloneURL := a.HTTPURLToRepo
+	if cloneURL == "" {
+		cloneURL = fmt.Sprintf("%s/%s.git", base, path)
 	}
 	return vcs.Repo{
 		Owner:         owner,
 		Name:          a.Path,
 		Path:          path,
+		CloneURL:      cloneURL,
 		DefaultBranch: a.DefaultBranch,
 		Archived:      a.Archived,
 		Fork:          a.ForkedFrom != nil,
@@ -144,7 +154,7 @@ func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
 			return out, fmt.Errorf("gitlab: decode project list: %w", err)
 		}
 		for _, pr := range projects {
-			out = append(out, pr.toRepo(p.owner))
+			out = append(out, pr.toRepo(p.owner, p.base))
 		}
 
 		page = strings.TrimSpace(header.Get("X-Next-Page"))
@@ -164,7 +174,7 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 		if err := json.Unmarshal(body, &existing); err != nil {
 			return vcs.Repo{}, fmt.Errorf("gitlab: decode project: %w", err)
 		}
-		return existing.toRepo(p.owner), nil
+		return existing.toRepo(p.owner, p.base), nil
 	}
 
 	if !isNotFound(err) {
@@ -210,7 +220,7 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 	if err := json.Unmarshal(created, &out); err != nil {
 		return vcs.Repo{}, fmt.Errorf("gitlab: decode created project: %w", err)
 	}
-	return out.toRepo(p.owner), nil
+	return out.toRepo(p.owner, p.base), nil
 }
 
 // namespaceID resolves a group path to its numeric id. Not cached; see the

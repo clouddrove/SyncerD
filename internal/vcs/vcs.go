@@ -10,6 +10,7 @@ type Repo struct {
 	Owner         string
 	Name          string
 	Path          string // namespace path, may contain slashes on GitLab
+	CloneURL      string // HTTPS git URL as reported by the provider
 	DefaultBranch string
 	Archived      bool
 	Fork          bool
@@ -51,7 +52,11 @@ type Ensurer interface {
 
 // Remote supplies everything needed to talk git to a provider.
 type Remote interface {
-	CloneURL(path string) string
+	// CloneURL builds the HTTPS git URL for a destination repository name
+	// that is relative to the provider's configured owner. It is not used
+	// for source repositories, which carry their own CloneURL from
+	// ListRepos.
+	CloneURL(name string) string
 	// GitCredential is called per run because Entra tokens and AWS
 	// credentials are short lived.
 	GitCredential(ctx context.Context) (GitCredential, error)

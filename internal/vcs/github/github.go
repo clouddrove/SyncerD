@@ -91,6 +91,10 @@ func (p *Provider) SupportsNesting() bool { return false }
 // CloneURL returns the HTTPS git URL for a repository name under the
 // configured owner. The name is relative to the owner, matching what
 // EnsureRepo creates.
+//
+// This is only used for a destination name; it assumes a bare name with no
+// slash. A nested name is rejected upstream by SupportsNesting before the
+// engine ever calls this method, so no guard is repeated here.
 func (p *Provider) CloneURL(name string) string {
 	return fmt.Sprintf("%s/%s/%s.git", p.cloneBase, p.owner, name)
 }
@@ -104,21 +108,30 @@ func (p *Provider) GitCredential(context.Context) (vcs.GitCredential, error) {
 type apiRepo struct {
 	Name          string `json:"name"`
 	FullName      string `json:"full_name"`
+	CloneURL      string `json:"clone_url"`
 	DefaultBranch string `json:"default_branch"`
 	Archived      bool   `json:"archived"`
 	Fork          bool   `json:"fork"`
 	Size          int    `json:"size"`
 }
 
-func (a apiRepo) toRepo(owner string) vcs.Repo {
+// toRepo converts the API representation to vcs.Repo. cloneBase is used
+// only as a fallback to compose CloneURL when the API response omits
+// clone_url, since apiRepo has no access to the Provider that knows it.
+func (a apiRepo) toRepo(owner, cloneBase string) vcs.Repo {
 	path := a.FullName
 	if path == "" {
 		path = owner + "/" + a.Name
+	}
+	cloneURL := a.CloneURL
+	if cloneURL == "" {
+		cloneURL = fmt.Sprintf("%s/%s.git", cloneBase, path)
 	}
 	return vcs.Repo{
 		Owner:         owner,
 		Name:          a.Name,
 		Path:          path,
+		CloneURL:      cloneURL,
 		DefaultBranch: a.DefaultBranch,
 		Archived:      a.Archived,
 		Fork:          a.Fork,
@@ -179,7 +192,7 @@ func (p *Provider) listFrom(ctx context.Context, pageURL string) ([]vcs.Repo, er
 			return out, fmt.Errorf("github: decode repository list: %w", err)
 		}
 		for _, r := range page {
-			out = append(out, r.toRepo(p.owner))
+			out = append(out, r.toRepo(p.owner, p.cloneBase))
 		}
 
 		next, nerr := resolveNext(pageURL, header.Get("Link"))
@@ -268,7 +281,7 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 		if err := json.Unmarshal(body, &existing); err != nil {
 			return vcs.Repo{}, fmt.Errorf("github: decode repository: %w", err)
 		}
-		return existing.toRepo(p.owner), nil
+		return existing.toRepo(p.owner, p.cloneBase), nil
 	}
 
 	if !isNotFound(err) {
@@ -306,7 +319,7 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 	if err := json.Unmarshal(created, &out); err != nil {
 		return vcs.Repo{}, fmt.Errorf("github: decode created repository: %w", err)
 	}
-	return out.toRepo(p.owner), nil
+	return out.toRepo(p.owner, p.cloneBase), nil
 }
 
 // SetDefaultBranch aligns the destination default branch with the source.
