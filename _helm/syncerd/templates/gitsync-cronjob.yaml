@@ -61,8 +61,20 @@ spec:
                       name: {{ $.Values.existingSecret | quote }}
                       key: SYNCERD_GIT_{{ $key }}_TOKEN
                       optional: true
+                - name: SYNCERD_GIT_{{ $key }}_GIT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.existingSecret | quote }}
+                      key: SYNCERD_GIT_{{ $key }}_GIT_USERNAME
+                      optional: true
+                - name: SYNCERD_GIT_{{ $key }}_GIT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.existingSecret | quote }}
+                      key: SYNCERD_GIT_{{ $key }}_GIT_PASSWORD
+                      optional: true
                 {{- end }}
-                {{- else if or .Values.secret.dockerhubUsername .Values.secret.dockerhubToken .Values.secret.slackWebhookUrl .Values.secret.gitTokens .Values.gitSync.providers }}
+                {{- else if or .Values.secret.dockerhubUsername .Values.secret.dockerhubToken .Values.secret.slackWebhookUrl .Values.secret.gitTokens .Values.secret.gitCredentials .Values.gitSync.providers }}
                 - name: SYNCERD_SLACK_WEBHOOK_URL
                   valueFrom:
                     secretKeyRef:
@@ -84,16 +96,26 @@ spec:
                       name: {{ $secretName }}
                       key: SYNCERD_GIT_{{ $key }}_TOKEN
                       optional: true
+                - name: SYNCERD_GIT_{{ $key }}_GIT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName }}
+                      key: SYNCERD_GIT_{{ $key }}_GIT_USERNAME
+                      optional: true
+                - name: SYNCERD_GIT_{{ $key }}_GIT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName }}
+                      key: SYNCERD_GIT_{{ $key }}_GIT_PASSWORD
+                      optional: true
                 {{- end }}
                 {{- end }}
               volumeMounts:
                 - name: config
                   mountPath: /config
                   readOnly: true
-                {{- if .Values.gitSync.persistence.enabled }}
-                - name: gitcache
+                - name: gitdata
                   mountPath: /gitdata
-                {{- end }}
               resources:
                 {{- toYaml .Values.gitSync.resources | nindent 16 }}
           volumes:
@@ -101,8 +123,16 @@ spec:
               configMap:
                 name: {{ include "syncerd.fullname" . }}-config
             {{- if .Values.gitSync.persistence.enabled }}
-            - name: gitcache
+            - name: gitdata
               persistentVolumeClaim:
                 claimName: {{ include "syncerd.fullname" . }}-gitcache
+            {{- else }}
+            # Ephemeral cache. The clone cache is rebuilt every run, and
+            # mirror state does not survive, so from the second run onward
+            # every repository fails the adopt guard until adopt is set.
+            # This is a safe failure, not data loss, but it is not a
+            # supported way to run git-sync continuously.
+            - name: gitdata
+              emptyDir: {}
             {{- end }}
 {{- end }}

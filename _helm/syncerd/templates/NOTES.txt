@@ -19,3 +19,19 @@ To run a sync manually:
 
 To watch logs of the last run:
   kubectl logs -l app.kubernetes.io/name={{ include "syncerd.name" . }} -n {{ .Release.Namespace }} --tail=100
+{{- if .Values.gitSync.enabled }}
+
+Git mirroring is enabled as a second CronJob: {{ include "syncerd.fullname" . }}-gitsync
+  Schedule: {{ .Values.gitSync.schedule }}
+  Each run executes: syncerd git-sync --once
+{{- if .Values.gitSync.persistence.enabled }}
+  Cache/state: PVC {{ include "syncerd.fullname" . }}-gitcache
+{{- else }}
+
+  WARNING: gitSync.persistence.enabled is false. The clone cache and mirror
+  state live in an emptyDir and do not survive past this run. From the
+  second run onward, every repository will fail the adopt guard until you
+  set adopt: true on the mirror. This is safe (no data loss) but is only
+  suited to one-shot testing, not a running schedule.
+{{- end }}
+{{- end }}

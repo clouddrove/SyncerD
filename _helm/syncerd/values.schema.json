@@ -53,7 +53,8 @@
             "enabled": { "type": "boolean" },
             "size": { "type": "string", "minLength": 1 },
             "storageClass": { "type": "string" }
-          }
+          },
+          "required": ["enabled"]
         },
         "workDir": { "type": "string" },
         "statePath": { "type": "string" },
@@ -107,7 +108,18 @@
         "dockerhubToken": { "type": "string" },
         "slackWebhookUrl": { "type": "string" },
         "slackChannel": { "type": "string" },
-        "gitTokens": { "type": "object" }
+        "gitTokens": { "type": "object" },
+        "gitCredentials": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "username": { "type": "string" },
+              "password": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "imagePullSecrets": {

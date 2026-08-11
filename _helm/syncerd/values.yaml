@@ -41,6 +41,13 @@ gitSync:
   # while keeping the cache makes every repository fail the adopt guard on
   # the next run, because SyncerD no longer knows it populated those
   # destinations itself. Both paths below sit under the same mount.
+  #
+  # enabled: false mounts an emptyDir instead of a PVC, so workDir and
+  # statePath stay valid and writable, but nothing survives past the run.
+  # This is for one-shot testing only: every run after the first starts with
+  # an empty cache and no state, so it re-clones everything and then fails
+  # the adopt guard on every destination it already populated, until adopt
+  # is set. Leave this enabled for any schedule you intend to keep running.
   persistence:
     enabled: true
     size: 10Gi
@@ -51,10 +58,16 @@ gitSync:
   # Parallel repository mirrors per run.
   concurrency: 4
 
-  # Named providers. Tokens come from the secret, never from values.
+  # Named providers. token, git_username, and git_password are secrets:
+  # set them in the secret block (gitTokens / gitCredentials) or via
+  # existingSecret, never here. A token, git_username, or git_password set
+  # on a provider entry in this values file is silently ignored, since the
+  # ConfigMap never carries those fields; the run then fails later with a
+  # confusing "token is required" error.
   # The env var name is derived from the provider name, upper cased with
   # non alphanumeric characters replaced by underscore, so a provider named
-  # "gh" reads SYNCERD_GIT_GH_TOKEN.
+  # "gh" reads SYNCERD_GIT_GH_TOKEN (and, if needed, SYNCERD_GIT_GH_GIT_USERNAME
+  # / SYNCERD_GIT_GH_GIT_PASSWORD for CodeCommit's static credential fallback).
   providers: []
   # Example:
   # providers:
@@ -131,6 +144,13 @@ secret:
   #   gh: "ghp_..."
   #   gl: "glpat-..."
   gitTokens: {}
+  # Git HTTPS credential pairs, keyed by provider name. Used only by
+  # CodeCommit's static credential fallback. Prefer existingSecret.
+  # gitCredentials:
+  #   cc:
+  #     username: "..."
+  #     password: "..."
+  gitCredentials: {}
 
 # imagePullSecrets: secrets used to pull the syncerd image itself (e.g. from a private registry).
 # This is separate from dockerConfigSecret which is for destination registry auth.

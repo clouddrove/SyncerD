@@ -60,12 +60,10 @@ data:
           {{- if .region }}
           region: {{ .region | quote }}
           {{- end }}
-          {{- if .git_username }}
-          git_username: {{ .git_username | quote }}
-          {{- end }}
-          {{- if .git_password }}
-          git_password: {{ .git_password | quote }}
-          {{- end }}
+          {{- /* token, git_username, git_password are secrets: they never
+               appear in the ConfigMap. They arrive as environment variables
+               (SYNCERD_GIT_<KEY>_TOKEN / _GIT_USERNAME / _GIT_PASSWORD),
+               sourced from the secret or an existingSecret. */}}
       {{- end }}
       mirrors:
       {{- range .Values.gitSync.mirrors }}
