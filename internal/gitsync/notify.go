@@ -27,6 +27,10 @@ func BuildMirroredMessage(rep *GitReport, detailed bool) notify.Message {
 		Fallback: fmt.Sprintf("SyncerD: %s", title),
 	}
 
+	if n == 0 {
+		return m
+	}
+
 	line := func(e MirrorEvent) string {
 		s := fmt.Sprintf("• `%s` → `%s` (%d pushed", e.SourceRepo, e.DestRepo, e.RefsPushed)
 		if e.RefsDeleted > 0 {
@@ -66,6 +70,10 @@ func BuildFailureMessage(rep *GitReport, detailed bool) notify.Message {
 		Fallback: fmt.Sprintf("SyncerD: %d git mirror failure(s)", n),
 	}
 
+	if n == 0 {
+		return m
+	}
+
 	line := func(f GitFailure) string {
 		target := f.SourceRepo
 		if f.DestRepo != "" {
@@ -92,7 +100,9 @@ func BuildFailureMessage(rep *GitReport, detailed bool) notify.Message {
 }
 
 // groupedSections buckets items by key, preserving first appearance order,
-// and caps the total number of lines emitted.
+// and caps the total number of lines emitted. A group that is cut short by
+// the cap says so in its heading, and the overflow marker sits in its own
+// section so it is not read as belonging to the last group.
 func groupedSections[T any](items []T, key func(T) string, render func(T) string) []notify.Section {
 	byKey := map[string][]T{}
 	var order []string
@@ -104,21 +114,38 @@ func groupedSections[T any](items []T, key func(T) string, render func(T) string
 		byKey[k] = append(byKey[k], it)
 	}
 
-	var sections []notify.Section
-	seen := 0
+	sections := make([]notify.Section, 0, len(order)+1)
+	remaining := maxNotifyLines
+
 	for _, k := range order {
 		list := byKey[k]
-		sec := notify.Section{Heading: fmt.Sprintf("%s (%d)", k, len(list))}
-		for _, it := range list {
-			if seen >= maxNotifyLines {
-				sec.Lines = append(sec.Lines, fmt.Sprintf("_…and %d more_", len(items)-maxNotifyLines))
-				sections = append(sections, sec)
-				return sections
-			}
+		if remaining <= 0 {
+			break
+		}
+
+		emit := len(list)
+		if emit > remaining {
+			emit = remaining
+		}
+
+		heading := fmt.Sprintf("%s (%d)", k, len(list))
+		if emit < len(list) {
+			heading = fmt.Sprintf("%s (%d of %d)", k, emit, len(list))
+		}
+
+		sec := notify.Section{Heading: heading}
+		for _, it := range list[:emit] {
 			sec.Lines = append(sec.Lines, render(it))
-			seen++
 		}
 		sections = append(sections, sec)
+		remaining -= emit
 	}
+
+	if len(items) > maxNotifyLines {
+		sections = append(sections, notify.Section{
+			Lines: []string{fmt.Sprintf("_…and %d more_", len(items)-maxNotifyLines)},
+		})
+	}
+
 	return sections
 }
