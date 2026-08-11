@@ -108,6 +108,9 @@ func TestEnsureRepoCreates(t *testing.T) {
 	mux.HandleFunc("/repos/acme/newrepo", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	})
+	mux.HandleFunc("/orgs/acme", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"login": "acme"})
+	})
 	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
@@ -146,6 +149,72 @@ func TestEnsureRepoIsIdempotent(t *testing.T) {
 	p, _ := newProvider(t, mux)
 	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "existing"}); err != nil {
 		t.Fatalf("ensure: %v", err)
+	}
+}
+
+func TestEnsureRepoCreatesUnderUserAccountWhenOwnerIsNotAnOrg(t *testing.T) {
+	var createPath string
+	var body map[string]any
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/newrepo", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/orgs/acme", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("must not create under the org endpoint when the owner is a personal account")
+	})
+	mux.HandleFunc("/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		createPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]any{"name": "newrepo", "full_name": "acme/newrepo"})
+	})
+
+	p, _ := newProvider(t, mux)
+	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "newrepo", Visibility: "private"}); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if createPath != "/user/repos" {
+		t.Errorf("createPath = %q, want /user/repos", createPath)
+	}
+	if body["name"] != "newrepo" {
+		t.Errorf("name = %v", body["name"])
+	}
+}
+
+func TestEnsureRepoDoesNotCreateOnNonNotFoundError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/thing", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a 500 on the existence check must be fatal, not a trigger to create")
+	})
+	mux.HandleFunc("/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a 500 on the existence check must be fatal, not a trigger to create")
+	})
+
+	p, _ := newProvider(t, mux)
+	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "thing"}); err == nil {
+		t.Fatal("expected the 500 to be surfaced")
+	}
+}
+
+func TestListReposDoesNotFallBackOnNonNotFoundError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"rate limited"}`, http.StatusForbidden)
+	})
+	mux.HandleFunc("/users/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a 403 on the org endpoint must not silently fall back to the user endpoint")
+	})
+
+	p, _ := newProvider(t, mux)
+	if _, err := p.ListRepos(context.Background()); err == nil {
+		t.Fatal("expected the 403 to be surfaced")
 	}
 }
 

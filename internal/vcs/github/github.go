@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -34,6 +36,8 @@ type Provider struct {
 	cloneBase string
 	token     string
 	hc        *http.Client
+
+	ownerIsOrg *bool
 }
 
 // New validates cfg and returns a provider.
@@ -120,39 +124,63 @@ func (a apiRepo) toRepo(owner string) vcs.Repo {
 // pagination. If the owner is not an organisation, the user endpoint is
 // used instead.
 func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
-	url := fmt.Sprintf("%s/orgs/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
+	orgURL := fmt.Sprintf("%s/orgs/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
 
-	repos, err := p.listFrom(ctx, url)
-	if err != nil {
-		var he *httpError
-		if errorsAs(err, &he) && he.status == http.StatusNotFound {
-			userURL := fmt.Sprintf("%s/users/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
-			return p.listFrom(ctx, userURL)
-		}
-		return nil, err
+	repos, err := p.listFrom(ctx, orgURL)
+	if err == nil {
+		return repos, nil
 	}
-	return repos, nil
+
+	// A 404 on the very first page means the owner is not an organisation.
+	// A 404 partway through is a real failure, not a reason to restart
+	// against a different endpoint and lose what we already collected.
+	if isNotFound(err) && len(repos) == 0 {
+		userURL := fmt.Sprintf("%s/users/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
+		return p.listFrom(ctx, userURL)
+	}
+
+	return nil, err
 }
 
-// listFrom walks the Link header chain starting at url.
-func (p *Provider) listFrom(ctx context.Context, url string) ([]vcs.Repo, error) {
-	var out []vcs.Repo
+// maxPages bounds a paginated listing. GitHub caps at 100 per page, so this
+// allows 100000 repositories, far beyond any real org, while stopping a
+// server that returns a cyclic next link.
+const maxPages = 1000
 
-	for url != "" {
-		body, header, err := p.do(ctx, http.MethodGet, url, nil)
+// listFrom walks the Link header chain starting at pageURL. It returns
+// whatever it collected alongside any error, so the caller can tell a
+// first page failure from a failure partway through.
+func (p *Provider) listFrom(ctx context.Context, pageURL string) ([]vcs.Repo, error) {
+	var out []vcs.Repo
+	seen := make(map[string]bool)
+
+	for pages := 0; pageURL != ""; pages++ {
+		if pages >= maxPages {
+			return out, fmt.Errorf("github: pagination exceeded %d pages, refusing to continue", maxPages)
+		}
+		if seen[pageURL] {
+			return out, fmt.Errorf("github: pagination revisited a page, refusing to loop")
+		}
+		seen[pageURL] = true
+
+		body, header, err := p.do(ctx, http.MethodGet, pageURL, nil)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 
 		var page []apiRepo
 		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, fmt.Errorf("github: decode repository list: %w", err)
+			return out, fmt.Errorf("github: decode repository list: %w", err)
 		}
 		for _, r := range page {
 			out = append(out, r.toRepo(p.owner))
 		}
 
-		url = nextLink(header.Get("Link"))
+		next, nerr := resolveNext(pageURL, header.Get("Link"))
+		if nerr != nil {
+			return out, nerr
+		}
+		pageURL = next
 	}
 
 	return out, nil
@@ -167,6 +195,49 @@ func nextLink(link string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// resolveNext extracts the rel="next" URL and resolves it against the
+// current page URL, so a relative link is handled the same as an absolute
+// one.
+func resolveNext(current, link string) (string, error) {
+	next := nextLink(link)
+	if next == "" {
+		return "", nil
+	}
+	base, err := url.Parse(current)
+	if err != nil {
+		return "", fmt.Errorf("github: parse current page URL: %w", err)
+	}
+	ref, err := url.Parse(next)
+	if err != nil {
+		return "", fmt.Errorf("github: parse next page link: %w", err)
+	}
+	return base.ResolveReference(ref).String(), nil
+}
+
+// ownerKind reports whether the configured owner is an organisation. The
+// answer is cached because it cannot change during a run, and both listing
+// and creation need it. A 404 means the owner is not an org, which is the
+// normal personal account case rather than an error.
+func (p *Provider) ownerKind(ctx context.Context) (bool, error) {
+	if p.ownerIsOrg != nil {
+		return *p.ownerIsOrg, nil
+	}
+
+	_, _, err := p.do(ctx, http.MethodGet, fmt.Sprintf("%s/orgs/%s", p.apiURL, p.owner), nil)
+	switch {
+	case err == nil:
+		isOrg := true
+		p.ownerIsOrg = &isOrg
+		return true, nil
+	case isNotFound(err):
+		isOrg := false
+		p.ownerIsOrg = &isOrg
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // EnsureRepo creates the repository if it does not already exist.
@@ -186,16 +257,32 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 		return existing.toRepo(p.owner), nil
 	}
 
-	var he *httpError
-	if !errorsAs(err, &he) || he.status != http.StatusNotFound {
+	if !isNotFound(err) {
 		return vcs.Repo{}, err
+	}
+
+	isOrg, err := p.ownerKind(ctx)
+	if err != nil {
+		return vcs.Repo{}, fmt.Errorf("github: determine whether %q is an organisation: %w", p.owner, err)
 	}
 
 	payload := map[string]any{
 		"name":    name,
 		"private": spec.Visibility != "public",
 	}
-	createURL := fmt.Sprintf("%s/orgs/%s/repos", p.apiURL, p.owner)
+
+	// GitHub has no endpoint that creates a repository under another
+	// user's personal account. Organisations use POST /orgs/{org}/repos;
+	// a personal account destination must use POST /user/repos, which
+	// creates under the authenticated token's own account. If the
+	// configured owner is a personal account that is not the token's
+	// account, creation is impossible on GitHub by any route, and the
+	// API error surfaces that per repository.
+	createURL := p.apiURL + "/user/repos"
+	if isOrg {
+		createURL = fmt.Sprintf("%s/orgs/%s/repos", p.apiURL, p.owner)
+	}
+
 	created, _, err := p.do(ctx, http.MethodPost, createURL, payload)
 	if err != nil {
 		return vcs.Repo{}, err
@@ -229,13 +316,11 @@ func (e *httpError) Error() string {
 	return fmt.Sprintf("github: HTTP %d: %s", e.status, e.body)
 }
 
-// errorsAs is a tiny local wrapper so the file has one import fewer.
-func errorsAs(err error, target **httpError) bool {
-	he, ok := err.(*httpError)
-	if ok {
-		*target = he
-	}
-	return ok
+// isNotFound reports whether err is a GitHub 404, unwrapping any context
+// added along the way.
+func isNotFound(err error) bool {
+	var he *httpError
+	return errors.As(err, &he) && he.status == http.StatusNotFound
 }
 
 // do performs a request and returns the body. The token never appears in
