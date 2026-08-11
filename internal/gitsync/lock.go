@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 )
 
 // Lock is an advisory lock over the clone cache directory. It prevents a
@@ -18,7 +17,9 @@ type Lock struct {
 }
 
 // AcquireLock takes an exclusive, non blocking lock on dir. The directory
-// is created if missing.
+// is created if missing. The underlying platform lock is implemented in
+// lock_unix.go and lock_windows.go so the exported API is identical on
+// every platform.
 func AcquireLock(dir string) (*Lock, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create work dir: %w", err)
@@ -30,7 +31,7 @@ func AcquireLock(dir string) (*Lock, error) {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(f); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("another git-sync is already running against work_dir %q (lock: %s)", dir, path)
 	}
@@ -38,7 +39,8 @@ func AcquireLock(dir string) (*Lock, error) {
 	// Record the pid for operators debugging a stuck run.
 	_ = f.Truncate(0)
 	if _, err := f.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0); err != nil {
-		// Not fatal: the lock itself is held by flock, not by the contents.
+		// Not fatal: the lock is held by the operating system, not by the
+		// file contents.
 		_ = err
 	}
 
@@ -52,7 +54,7 @@ func (l *Lock) Release() error {
 	}
 	l.released = true
 
-	if err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN); err != nil {
+	if err := unlockFile(l.file); err != nil {
 		_ = l.file.Close()
 		return fmt.Errorf("unlock: %w", err)
 	}

@@ -106,12 +106,9 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		return rep, err
 	}
 
-	// The lock guards WorkDir, the clone cache directory, against a second
-	// SyncerD process running concurrently against it. It is taken even on
-	// a dry run: SyncCache below still populates the cache during a dry
-	// run, because "git push --dry-run" needs the objects locally to
-	// report what it would send. Only an empty WorkDir (no cache in use)
-	// skips the lock.
+	// A dry run takes the lock too. It does not write to the destination,
+	// but the runner still populates the clone cache, because
+	// git push --dry-run needs the objects locally.
 	if e.opts.WorkDir != "" {
 		lock, err := AcquireLock(e.opts.WorkDir)
 		if err != nil {
