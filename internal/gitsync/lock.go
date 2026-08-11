@@ -48,6 +48,11 @@ func AcquireLock(dir string) (*Lock, error) {
 }
 
 // Release drops the lock. Calling it more than once is safe.
+//
+// The lock file is deliberately left on disk. Unlinking it would let a
+// later process create a fresh inode at the same path and lock that
+// instead, so two processes could hold what each believes is an exclusive
+// lock. An empty lock file in the cache directory costs nothing.
 func (l *Lock) Release() error {
 	if l == nil || l.released {
 		return nil
@@ -61,6 +66,5 @@ func (l *Lock) Release() error {
 	if err := l.file.Close(); err != nil {
 		return fmt.Errorf("close lock file: %w", err)
 	}
-	_ = os.Remove(l.path)
 	return nil
 }

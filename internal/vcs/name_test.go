@@ -82,13 +82,13 @@ func TestRenderRejectsEmptyResult(t *testing.T) {
 
 func TestProducesNestedName(t *testing.T) {
 	cases := map[string]bool{
-		"{{ .Path }}":                     true,
-		"{{ .Owner }}/{{ .Repo }}":        true,
-		"team/{{ .Repo }}":                true,
-		"{{ .Repo }}":                     false,
-		"{{ .Owner }}-{{ .Repo }}":        false,
-		"ado-{{ .Repo }}":                 false,
-		"":                                false,
+		"{{ .Path }}":              true,
+		"{{ .Owner }}/{{ .Repo }}": true,
+		"team/{{ .Repo }}":         true,
+		"{{ .Repo }}":              false,
+		"{{ .Owner }}-{{ .Repo }}": false,
+		"ado-{{ .Repo }}":          false,
+		"":                         false,
 	}
 	for raw, want := range cases {
 		tpl, err := ParseNameTemplate(raw)

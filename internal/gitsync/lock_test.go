@@ -1,6 +1,7 @@
 package gitsync
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,4 +68,22 @@ func TestAcquireLockCreatesMissingDirectory(t *testing.T) {
 		t.Fatalf("acquire: %v", err)
 	}
 	_ = l.Release()
+}
+
+func TestReleaseLeavesLockFileInPlace(t *testing.T) {
+	dir := t.TempDir()
+
+	l, err := AcquireLock(dir)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if err := l.Release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	// Unlinking would let a later process lock a different inode at the
+	// same path while an existing holder still has the old one.
+	if _, err := os.Stat(filepath.Join(dir, ".syncerd-git.lock")); err != nil {
+		t.Errorf("the lock file must remain on disk after release: %v", err)
+	}
 }
