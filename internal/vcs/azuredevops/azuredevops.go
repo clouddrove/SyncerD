@@ -174,7 +174,7 @@ type apiRepo struct {
 func (a apiRepo) toRepo(org, project, apiURL string) vcs.Repo {
 	branch := strings.TrimPrefix(a.DefaultBranch, "refs/heads/")
 
-	cloneURL := a.RemoteURL
+	cloneURL := vcs.SanitizeCloneURL(a.RemoteURL)
 	if cloneURL == "" {
 		cloneURL = fmt.Sprintf("%s/%s/%s/_git/%s", apiURL, org, project, a.Name)
 	}

@@ -54,16 +54,55 @@ func (n *NameTemplate) ProducesNestedName() bool {
 	return err != nil || strings.Contains(out, "/")
 }
 
-// Render produces the destination repository name for r.
-func (n *NameTemplate) Render(r Repo) (string, error) {
+// emptyFieldSentinel is substituted for an empty repository field to
+// detect whether the template actually referenced it.
+const emptyFieldSentinel = "\x00probe\x00"
+
+// renderWith executes the template against r without any validation.
+func (n *NameTemplate) renderWith(r Repo) (string, error) {
 	var sb strings.Builder
-	err := n.tmpl.Execute(&sb, nameVars{Repo: r.Name, Owner: r.Owner, Path: r.Path})
-	if err != nil {
+	if err := n.tmpl.Execute(&sb, nameVars{Repo: r.Name, Owner: r.Owner, Path: r.Path}); err != nil {
 		return "", fmt.Errorf("render name_template %q: %w", n.raw, err)
 	}
-	out := strings.Trim(strings.TrimSpace(sb.String()), "/")
+	return strings.Trim(strings.TrimSpace(sb.String()), "/"), nil
+}
+
+// Render produces the destination repository name for r.
+func (n *NameTemplate) Render(r Repo) (string, error) {
+	out, err := n.renderWith(r)
+	if err != nil {
+		return "", err
+	}
 	if out == "" {
 		return "", fmt.Errorf("name_template %q rendered empty for repo %q", n.raw, r.Name)
 	}
+
+	// A template that references a field which is empty produces a
+	// malformed name, such as "-svc" from "{{ .Owner }}-{{ .Repo }}" when
+	// the source has no owner, which is always the case for CodeCommit.
+	// Substituting a sentinel for each empty field reveals whether the
+	// template actually used one. A name that merely begins or ends with a
+	// separator is fine: .github is a real repository.
+	probe := r
+	probed := false
+	if probe.Owner == "" {
+		probe.Owner = emptyFieldSentinel
+		probed = true
+	}
+	if probe.Path == "" {
+		probe.Path = emptyFieldSentinel
+		probed = true
+	}
+	if probe.Name == "" {
+		probe.Name = emptyFieldSentinel
+		probed = true
+	}
+	if probed {
+		probeOut, perr := n.renderWith(probe)
+		if perr == nil && probeOut != out {
+			return "", fmt.Errorf("name_template %q rendered %q for repo %q because a template variable was empty; .Owner is always empty for CodeCommit sources, so use a template that does not reference it", n.raw, out, r.Name)
+		}
+	}
+
 	return out, nil
 }

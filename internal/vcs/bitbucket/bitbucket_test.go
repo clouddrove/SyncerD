@@ -152,7 +152,7 @@ func TestListReposTakesCloneURLFromHTTPSLink(t *testing.T) {
 					"links": map[string]any{
 						"clone": []map[string]any{
 							{"name": "ssh", "href": "git@bitbucket.org:acme/first.git"},
-							{"name": "https", "href": "https://bitbucket.org/acme/first.git"},
+							{"name": "https", "href": "https://acct@bitbucket.org/myworkspace/repo.git"},
 						},
 					},
 				},
@@ -165,8 +165,11 @@ func TestListReposTakesCloneURLFromHTTPSLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(repos) != 1 || repos[0].CloneURL != "https://bitbucket.org/acme/first.git" {
-		t.Fatalf("CloneURL = %+v, want the https clone link", repos)
+	if len(repos) != 1 || repos[0].CloneURL != "https://bitbucket.org/myworkspace/repo.git" {
+		t.Fatalf("CloneURL = %+v, want the https clone link with userinfo stripped", repos)
+	}
+	if strings.Contains(repos[0].CloneURL, "@") {
+		t.Errorf("CloneURL = %q, must not carry userinfo", repos[0].CloneURL)
 	}
 }
 

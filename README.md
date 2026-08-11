@@ -295,6 +295,7 @@ Run with `--dry-run` to print the ref changes each mirror would make, per reposi
 - **CodeCommit**: SyncerD does not derive SigV4 git credentials, so IRSA and instance roles cover listing and creating repositories but the git transport needs static IAM HTTPS Git credentials, which are only issuable to an IAM user. Set `git_username` and `git_password` on the provider (or `SYNCERD_GIT_<NAME>_GIT_USERNAME` / `SYNCERD_GIT_<NAME>_GIT_PASSWORD`).
 - **Azure DevOps Entra mode**: the operator supplies the access token; SyncerD does not acquire one from Azure AD. Set `auth: entra` on the provider and supply the token through the same `SYNCERD_GIT_<NAME>_TOKEN` variable used for a PAT.
 - **Bitbucket**: Cloud only. The `api_url` override changes the host but the request paths are Cloud shaped, so Bitbucket Data Center is not supported. Bitbucket also has no archived concept, so `skip_archived` has no effect for a Bitbucket source.
+- **CodeCommit filters**: `skip_archived` and `skip_forks` have no effect for CodeCommit sources, since CodeCommit has neither concept.
 
 For the full local test procedure, including config validation, idempotency, pruning, the adopt guard, and Slack, see [docs/git-sync-runbook.md](docs/git-sync-runbook.md).
 

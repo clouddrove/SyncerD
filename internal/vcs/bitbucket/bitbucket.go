@@ -147,7 +147,7 @@ func (a apiRepo) toRepo(owner, cloneBase string) vcs.Repo {
 	cloneURL := ""
 	for _, c := range a.Links.Clone {
 		if c.Name == "https" {
-			cloneURL = c.Href
+			cloneURL = vcs.SanitizeCloneURL(c.Href)
 			break
 		}
 	}

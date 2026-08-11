@@ -399,6 +399,20 @@ func TestRejectsURLWithEmbeddedCredentials(t *testing.T) {
 	}
 }
 
+// TestRunnerRejectsSourceURLWithUserinfo documents why providers must
+// sanitise a provider reported clone URL before the engine ever sees it.
+// Azure DevOps and Bitbucket return clone URLs with the account embedded as
+// userinfo, and this guard is what makes an unsanitised URL from either of
+// those providers fail at the fetch stage rather than reaching git with a
+// credential riding along in the URL.
+func TestRunnerRejectsSourceURLWithUserinfo(t *testing.T) {
+	r := NewRunner(nil)
+	_, err := r.LsRemote(context.Background(), "https://myorg@dev.azure.com/myorg/proj/_git/repo", vcs.GitCredential{})
+	if err == nil {
+		t.Fatal("a clone URL carrying userinfo must be refused")
+	}
+}
+
 func TestParseGitVersion(t *testing.T) {
 	cases := map[string][2]int{
 		"git version 2.30.0\n":               {2, 30},

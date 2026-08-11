@@ -188,10 +188,13 @@ func toRepo(m *types.RepositoryMetadata) vcs.Repo {
 		Path:          name,
 		CloneURL:      cloneURL,
 		DefaultBranch: branch,
-		// CodeCommit has no archived concept, so this is always false, the
-		// same as the Bitbucket provider for the same reason.
+		// CodeCommit has no archived concept for repositories, so this is
+		// always false. skip_archived therefore has no effect on a
+		// CodeCommit source, which is correct behaviour, not an oversight.
 		Archived: false,
-		// CodeCommit has no fork concept.
+		// CodeCommit has no fork concept for repositories, so this is
+		// always false. skip_forks therefore has no effect on a CodeCommit
+		// source, which is correct behaviour, not an oversight.
 		Fork: false,
 		// A nil DefaultBranch is the only available signal that a
 		// repository has no commits yet, so it is used as the Empty

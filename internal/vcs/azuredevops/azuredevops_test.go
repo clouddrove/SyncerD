@@ -53,7 +53,7 @@ func TestListReposParsesValueArray(t *testing.T) {
 					"id":            "11111111-1111-1111-1111-111111111111",
 					"name":          "first",
 					"defaultBranch": "refs/heads/main",
-					"remoteUrl":     "https://dev.azure.com/acme-org/acme-proj/_git/first",
+					"remoteUrl":     "https://myorg@dev.azure.com/myorg/myproject/_git/repo",
 					"isDisabled":    true,
 					"isFork":        true,
 					"size":          4096,
@@ -96,8 +96,11 @@ func TestListReposParsesValueArray(t *testing.T) {
 	if first.Empty {
 		t.Error("first.Empty = true, want false (size != 0)")
 	}
-	if first.CloneURL != "https://dev.azure.com/acme-org/acme-proj/_git/first" {
-		t.Errorf("first.CloneURL = %q, want remoteUrl value", first.CloneURL)
+	if first.CloneURL != "https://dev.azure.com/myorg/myproject/_git/repo" {
+		t.Errorf("first.CloneURL = %q, want remoteUrl value with userinfo stripped", first.CloneURL)
+	}
+	if strings.Contains(first.CloneURL, "@") {
+		t.Errorf("first.CloneURL = %q, must not carry userinfo", first.CloneURL)
 	}
 
 	second := repos[1]
