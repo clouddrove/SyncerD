@@ -179,7 +179,7 @@ func (e *Engine) runMirror(ctx context.Context, m Mirror, repos []vcs.Repo) erro
 			defer wg.Done()
 			defer func() {
 				if rec := recover(); rec != nil {
-					e.addFailure(GitFailure{
+					e.fail(cancel, GitFailure{
 						Mirror:     m.Name,
 						SourceRepo: repo.Path,
 						Stage:      "worker",

@@ -28,6 +28,12 @@ type fakeLister struct{ repos []vcs.Repo }
 
 func (f *fakeLister) ListRepos(context.Context) ([]vcs.Repo, error) { return f.repos, nil }
 
+// panicRemote panics when the engine asks for a clone URL, standing in for
+// any provider bug that would take down a worker.
+type panicRemote struct{ fakeRemote }
+
+func (p *panicRemote) CloneURL(string) string { panic("provider exploded") }
+
 // fakeEnsurer records creations and initialises a bare repo on disk. The
 // engine's worker pool can call EnsureRepo from several goroutines at
 // once, so created is guarded by a mutex like a real provider client
@@ -246,6 +252,23 @@ func TestEngineFailFastStopsOnFirstFailure(t *testing.T) {
 	}
 	if len(rep.Failures) == 0 {
 		t.Fatal("expected a recorded failure")
+	}
+}
+
+func TestEngineFailFastAbortsOnWorkerPanic(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+	eng.opts.FailFast = true
+	m.SourceRemote = &panicRemote{}
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err == nil {
+		t.Fatal("a panicking worker must fail the run under FailFast")
+	}
+	if len(rep.Failures) != 1 {
+		t.Fatalf("got %d failures, want 1: %+v", len(rep.Failures), rep.Failures)
+	}
+	if rep.Failures[0].Stage != "worker" {
+		t.Errorf("Stage = %q, want worker", rep.Failures[0].Stage)
 	}
 }
 
