@@ -36,3 +36,80 @@ data:
       notify_on_new: {{ .Values.config.slack.notify_on_new }}
       notify_on_error: {{ .Values.config.slack.notify_on_error }}
       message_format: {{ .Values.config.slack.message_format | default "compact" | quote }}
+    {{- if .Values.gitSync.enabled }}
+    git:
+      providers:
+      {{- range .Values.gitSync.providers }}
+        - name: {{ .name | quote }}
+          type: {{ .type | quote }}
+          {{- if .owner }}
+          owner: {{ .owner | quote }}
+          {{- end }}
+          {{- if .api_url }}
+          api_url: {{ .api_url | quote }}
+          {{- end }}
+          {{- if .email }}
+          email: {{ .email | quote }}
+          {{- end }}
+          {{- if .project }}
+          project: {{ .project | quote }}
+          {{- end }}
+          {{- if .auth }}
+          auth: {{ .auth | quote }}
+          {{- end }}
+          {{- if .region }}
+          region: {{ .region | quote }}
+          {{- end }}
+          {{- if .git_username }}
+          git_username: {{ .git_username | quote }}
+          {{- end }}
+          {{- if .git_password }}
+          git_password: {{ .git_password | quote }}
+          {{- end }}
+      {{- end }}
+      mirrors:
+      {{- range .Values.gitSync.mirrors }}
+        - name: {{ .name | quote }}
+          source: {{ .source | quote }}
+          destination: {{ .destination | quote }}
+          {{- if .filters }}
+          filters:
+            {{- if .filters.include }}
+            include:
+            {{- range .filters.include }}
+              - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .filters.exclude }}
+            exclude:
+            {{- range .filters.exclude }}
+              - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if hasKey .filters "skip_archived" }}
+            skip_archived: {{ .filters.skip_archived }}
+            {{- end }}
+            {{- if hasKey .filters "skip_forks" }}
+            skip_forks: {{ .filters.skip_forks }}
+            {{- end }}
+          {{- end }}
+          {{- if hasKey . "create_missing" }}
+          create_missing: {{ .create_missing }}
+          {{- end }}
+          {{- if .visibility }}
+          visibility: {{ .visibility | quote }}
+          {{- end }}
+          {{- if .push_mode }}
+          push_mode: {{ .push_mode | quote }}
+          {{- end }}
+          {{- if .adopt }}
+          adopt: {{ .adopt }}
+          {{- end }}
+          {{- if .name_template }}
+          name_template: {{ .name_template | quote }}
+          {{- end }}
+      {{- end }}
+      work_dir: {{ .Values.gitSync.workDir | quote }}
+      state_path: {{ .Values.gitSync.statePath | quote }}
+      concurrency: {{ .Values.gitSync.concurrency }}
+    {{- end }}

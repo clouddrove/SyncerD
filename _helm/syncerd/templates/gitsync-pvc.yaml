@@ -1,0 +1,17 @@
+{{- if and .Values.gitSync.enabled .Values.gitSync.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "syncerd.fullname" . }}-gitcache
+  labels:
+    {{- include "syncerd.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.gitSync.persistence.size }}
+  {{- if .Values.gitSync.persistence.storageClass }}
+  storageClassName: {{ .Values.gitSync.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

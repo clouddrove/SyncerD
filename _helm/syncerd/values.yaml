@@ -24,6 +24,70 @@ persistence:
   size: 1Gi
   # storageClass: ""  # use cluster default if not set
 
+# Git repository mirroring (syncerd git-sync). Default: disabled.
+# Mirrors repositories between GitHub and GitLab in either direction.
+# Runs as its own CronJob so it can keep a different cadence from image sync.
+gitSync:
+  enabled: false
+
+  # Repo mirroring is usually far more frequent than image sync.
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  restartPolicy: OnFailure
+
+  # The clone cache and the mirror state MUST share a volume. Losing state
+  # while keeping the cache makes every repository fail the adopt guard on
+  # the next run, because SyncerD no longer knows it populated those
+  # destinations itself. Both paths below sit under the same mount.
+  persistence:
+    enabled: true
+    size: 10Gi
+    # storageClass: ""  # use cluster default if not set
+  workDir: /gitdata/cache
+  statePath: /gitdata/cache/git-state.json
+
+  # Parallel repository mirrors per run.
+  concurrency: 4
+
+  # Named providers. Tokens come from the secret, never from values.
+  # The env var name is derived from the provider name, upper cased with
+  # non alphanumeric characters replaced by underscore, so a provider named
+  # "gh" reads SYNCERD_GIT_GH_TOKEN.
+  providers: []
+  # Example:
+  # providers:
+  #   - name: gh
+  #     type: github
+  #     owner: my-org
+  #   - name: gl
+  #     type: gitlab
+  #     owner: my-group
+
+  mirrors: []
+  # Example:
+  # mirrors:
+  #   - name: gh-to-gl
+  #     source: gh
+  #     destination: gl
+  #     filters:
+  #       include: ["terraform-*"]
+  #       skip_archived: true
+  #       skip_forks: true
+  #     create_missing: true
+  #     visibility: private
+  #     push_mode: mirror
+
+  # Cloning real repositories needs more headroom than image sync.
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
 # SyncerD config (maps to syncerd.yaml)
 # Source: Docker Hub
 config:
@@ -62,6 +126,11 @@ secret:
   dockerhubToken: ""
   slackWebhookUrl: ""
   slackChannel: ""
+  # Git provider tokens, keyed by provider name. Prefer existingSecret.
+  # gitTokens:
+  #   gh: "ghp_..."
+  #   gl: "glpat-..."
+  gitTokens: {}
 
 # imagePullSecrets: secrets used to pull the syncerd image itself (e.g. from a private registry).
 # This is separate from dockerConfigSecret which is for destination registry auth.

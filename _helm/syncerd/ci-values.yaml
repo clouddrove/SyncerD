@@ -8,3 +8,24 @@ config:
   images:
     - name: library/nginx
       watch_tags: true
+
+gitSync:
+  enabled: true
+  providers:
+    - name: gh
+      type: github
+      owner: my-org
+    - name: gl
+      type: gitlab
+      owner: my-group
+  mirrors:
+    - name: gh-to-gl
+      source: gh
+      destination: gl
+      filters:
+        include: ["terraform-*"]
+        skip_archived: true
+        skip_forks: true
+      create_missing: true
+      visibility: private
+      push_mode: mirror
