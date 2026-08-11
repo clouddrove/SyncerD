@@ -10,6 +10,10 @@ image:
 # Kubernetes CronJob schedule (when to run sync). Default: every 3 weeks at midnight UTC
 # https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
 cronjob:
+  # Set to false to disable the image sync CronJob entirely, e.g. for a
+  # deployment that only wants gitSync mirroring. Defaults to true so
+  # existing installs are unaffected.
+  enabled: true
   schedule: "0 0 */21 * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -23,6 +27,83 @@ persistence:
   enabled: false
   size: 1Gi
   # storageClass: ""  # use cluster default if not set
+
+# Git repository mirroring (syncerd git-sync). Default: disabled.
+# Mirrors repositories between GitHub and GitLab in either direction.
+# Runs as its own CronJob so it can keep a different cadence from image sync.
+gitSync:
+  enabled: false
+
+  # Repo mirroring is usually far more frequent than image sync.
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  restartPolicy: OnFailure
+
+  # The clone cache and the mirror state MUST share a volume. Losing state
+  # while keeping the cache makes every repository fail the adopt guard on
+  # the next run, because SyncerD no longer knows it populated those
+  # destinations itself. Both paths below sit under the same mount.
+  #
+  # enabled: false mounts an emptyDir instead of a PVC, so workDir and
+  # statePath stay valid and writable, but nothing survives past the run.
+  # This is for one-shot testing only: every run after the first starts with
+  # an empty cache and no state, so it re-clones everything and then fails
+  # the adopt guard on every destination it already populated, until adopt
+  # is set. Leave this enabled for any schedule you intend to keep running.
+  persistence:
+    enabled: true
+    size: 10Gi
+    # storageClass: ""  # use cluster default if not set
+  workDir: /gitdata/cache
+  statePath: /gitdata/cache/git-state.json
+
+  # Parallel repository mirrors per run.
+  concurrency: 4
+
+  # Named providers. token, git_username, and git_password are secrets:
+  # set them in the secret block (gitTokens / gitCredentials) or via
+  # existingSecret, never here. A token, git_username, or git_password set
+  # on a provider entry in this values file is silently ignored, since the
+  # ConfigMap never carries those fields; the run then fails later with a
+  # confusing "token is required" error.
+  # The env var name is derived from the provider name, upper cased with
+  # non alphanumeric characters replaced by underscore, so a provider named
+  # "gh" reads SYNCERD_GIT_GH_TOKEN (and, if needed, SYNCERD_GIT_GH_GIT_USERNAME
+  # / SYNCERD_GIT_GH_GIT_PASSWORD for CodeCommit's static credential fallback).
+  providers: []
+  # Example:
+  # providers:
+  #   - name: gh
+  #     type: github
+  #     owner: my-org
+  #   - name: gl
+  #     type: gitlab
+  #     owner: my-group
+
+  mirrors: []
+  # Example:
+  # mirrors:
+  #   - name: gh-to-gl
+  #     source: gh
+  #     destination: gl
+  #     filters:
+  #       include: ["terraform-*"]
+  #       skip_archived: true
+  #       skip_forks: true
+  #     create_missing: true
+  #     visibility: private
+  #     push_mode: mirror
+
+  # Cloning real repositories needs more headroom than image sync.
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
 
 # SyncerD config (maps to syncerd.yaml)
 # Source: Docker Hub
@@ -62,6 +143,18 @@ secret:
   dockerhubToken: ""
   slackWebhookUrl: ""
   slackChannel: ""
+  # Git provider tokens, keyed by provider name. Prefer existingSecret.
+  # gitTokens:
+  #   gh: "ghp_..."
+  #   gl: "glpat-..."
+  gitTokens: {}
+  # Git HTTPS credential pairs, keyed by provider name. Used only by
+  # CodeCommit's static credential fallback. Prefer existingSecret.
+  # gitCredentials:
+  #   cc:
+  #     username: "..."
+  #     password: "..."
+  gitCredentials: {}
 
 # imagePullSecrets: secrets used to pull the syncerd image itself (e.g. from a private registry).
 # This is separate from dockerConfigSecret which is for destination registry auth.

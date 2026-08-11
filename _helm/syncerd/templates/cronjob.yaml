@@ -1,3 +1,4 @@
+{{- if .Values.cronjob.enabled }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -140,3 +141,4 @@ spec:
                   - key: .dockerconfigjson
                     path: config.json
             {{- end }}
+{{- end }}

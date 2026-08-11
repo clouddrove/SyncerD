@@ -18,13 +18,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": { "type": "boolean" },
         "schedule": { "type": "string", "minLength": 1 },
         "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] },
         "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
         "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
         "restartPolicy": { "type": "string", "enum": ["OnFailure", "Never"] }
       },
-      "required": ["schedule"]
+      "required": ["enabled", "schedule"]
     },
     "persistence": {
       "type": "object",
@@ -33,6 +34,41 @@
         "enabled": { "type": "boolean" },
         "size": { "type": "string", "minLength": 1 },
         "storageClass": { "type": "string" }
+      },
+      "required": ["enabled"]
+    },
+    "gitSync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string", "minLength": 1 },
+        "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] },
+        "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "restartPolicy": { "type": "string", "enum": ["OnFailure", "Never"] },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string", "minLength": 1 },
+            "storageClass": { "type": "string" }
+          },
+          "required": ["enabled"]
+        },
+        "workDir": { "type": "string" },
+        "statePath": { "type": "string" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "providers": { "type": "array", "items": { "type": "object" } },
+        "mirrors": { "type": "array", "items": { "type": "object" } },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "limits": { "type": "object" },
+            "requests": { "type": "object" }
+          }
+        }
       },
       "required": ["enabled"]
     },
@@ -72,7 +108,19 @@
         "dockerhubPassword": { "type": "string" },
         "dockerhubToken": { "type": "string" },
         "slackWebhookUrl": { "type": "string" },
-        "slackChannel": { "type": "string" }
+        "slackChannel": { "type": "string" },
+        "gitTokens": { "type": "object" },
+        "gitCredentials": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "username": { "type": "string" },
+              "password": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "imagePullSecrets": {

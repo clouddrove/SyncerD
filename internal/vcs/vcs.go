@@ -1,0 +1,77 @@
+// Package vcs abstracts the git hosting providers SyncerD can mirror
+// between. Roles are separate interfaces so configuration can be proven
+// runnable before any network call is made.
+package vcs
+
+import "context"
+
+// Repo is a repository as reported by a source provider.
+type Repo struct {
+	Owner         string
+	Name          string
+	Path          string // namespace path, may contain slashes on GitLab
+	CloneURL      string // HTTPS git URL as reported by the provider
+	DefaultBranch string
+	Archived      bool
+	Fork          bool
+	Empty         bool
+}
+
+// RepoSpec describes a repository to create at a destination.
+type RepoSpec struct {
+	Path          string
+	DefaultBranch string
+	Visibility    string
+}
+
+// CredKind selects how a credential is presented to git.
+type CredKind int
+
+const (
+	CredBasic CredKind = iota
+	CredBearer
+)
+
+// GitCredential authenticates the git transport.
+type GitCredential struct {
+	Kind   CredKind
+	User   string // basic only
+	Secret string
+}
+
+// Lister discovers repositories. Implemented by source providers.
+type Lister interface {
+	ListRepos(ctx context.Context) ([]Repo, error)
+}
+
+// Ensurer creates a repository if it does not exist. Implemented by
+// destination providers that support create_missing.
+type Ensurer interface {
+	EnsureRepo(ctx context.Context, spec RepoSpec) (Repo, error)
+}
+
+// Remote supplies everything needed to talk git to a provider.
+type Remote interface {
+	// CloneURL builds the HTTPS git URL for a destination repository name
+	// that is relative to the provider's configured owner. It is not used
+	// for source repositories, which carry their own CloneURL from
+	// ListRepos.
+	CloneURL(name string) string
+	// GitCredential is called per run because Entra tokens and AWS
+	// credentials are short lived.
+	GitCredential(ctx context.Context) (GitCredential, error)
+	SupportsNesting() bool
+}
+
+// DefaultBranchSetter aligns a freshly created destination repository with
+// the source default branch. Optional.
+type DefaultBranchSetter interface {
+	SetDefaultBranch(ctx context.Context, path, branch string) error
+}
+
+// Provider is the minimum every provider implements.
+type Provider interface {
+	Name() string
+	Type() string
+	Remote
+}

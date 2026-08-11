@@ -72,3 +72,38 @@ slack:
 
 # Failure behavior
 fail_fast: false # false = best-effort per image/tag; true = stop on first error
+
+# Git repository mirroring (syncerd git-sync). Optional, separate from image
+# sync above. Uncomment and adjust to mirror repositories between GitHub and
+# GitLab. Tokens are NOT set here; export them as environment variables named
+# after the provider (see below).
+# git:
+#   providers:
+#     - name: gh
+#       type: github
+#       owner: your-github-org
+#       # token: set via SYNCERD_GIT_GH_TOKEN, not here
+#     - name: gl
+#       type: gitlab
+#       owner: your-gitlab-group
+#       # token: set via SYNCERD_GIT_GL_TOKEN, not here
+#
+#   mirrors:
+#     - name: gh-to-gl
+#       source: gh
+#       destination: gl
+#       filters:
+#         include: ["terraform-*"]
+#         skip_archived: true
+#         skip_forks: true
+#       create_missing: true
+#       visibility: private
+#       push_mode: mirror
+#
+#   # work_dir (clone cache) and state_path (fingerprint state) MUST share a
+#   # volume. Losing state while keeping the cache makes every repository
+#   # fail the adopt guard on the next run. The paths below are for a local
+#   # run; a container deployment should point both at a mounted volume
+#   # instead, e.g. /var/lib/syncerd/git.
+#   work_dir: ./syncerd-git-cache
+#   state_path: ./syncerd-git-cache/git-state.json

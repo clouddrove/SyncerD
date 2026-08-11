@@ -15,6 +15,7 @@ type Config struct {
 	StatePath    string              `mapstructure:"state_path"`
 	Slack        SlackConfig         `mapstructure:"slack"`
 	FailFast     bool                `mapstructure:"fail_fast"`
+	Git          *GitConfig          `mapstructure:"git"`
 }
 
 type SourceConfig struct {
@@ -115,15 +116,17 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	// Validate config
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	if cfg.Git != nil {
+		cfg.Git.ApplyEnvOverlay()
+		cfg.Git.ApplyDefaults()
 	}
 
 	return &cfg, nil
 }
 
-func (c *Config) Validate() error {
+// ValidateImageSync checks the configuration required by the "sync" command.
+// Git mirroring has its own validator; see ValidateGitSync.
+func (c *Config) ValidateImageSync() error {
 	if c.Source.Type == "" {
 		return fmt.Errorf("source.type is required")
 	}

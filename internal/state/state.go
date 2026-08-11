@@ -53,26 +53,7 @@ func (s *State) Save(path string) error {
 		return nil
 	}
 	s.UpdatedAt = time.Now().UTC()
-
-	dir := filepath.Dir(path)
-	if dir != "." && dir != "/" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create state dir: %w", err)
-		}
-	}
-
-	tmp := path + ".tmp"
-	b, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal state: %w", err)
-	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("write state tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("replace state file: %w", err)
-	}
-	return nil
+	return writeAtomic(path, s)
 }
 
 func (s *State) IsSynced(destName, image, tag string) bool {
@@ -103,4 +84,28 @@ func (s *State) MarkSynced(destName, image, tag string) {
 		s.Synced[destName][image] = make(map[string]time.Time)
 	}
 	s.Synced[destName][image][tag] = time.Now().UTC()
+}
+
+// writeAtomic marshals v as indented JSON and replaces path in one rename,
+// so a crash mid-write cannot leave a truncated state file.
+func writeAtomic(path string, v any) error {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "/" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create state dir: %w", err)
+		}
+	}
+
+	tmp := path + ".tmp"
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal state: %w", err)
+	}
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write state tmp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace state file: %w", err)
+	}
+	return nil
 }

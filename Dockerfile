@@ -23,7 +23,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuff
 # Final stage
 FROM alpine:3.21
 
-RUN apk --no-cache add ca-certificates
+# git is required by the git-sync subcommand, which shells out to it
+RUN apk --no-cache add ca-certificates git \
+    && mkdir -p /var/lib/syncerd/git \
+    && chown -R 1000:1000 /var/lib/syncerd/git
 
 WORKDIR /app
 
@@ -33,4 +36,4 @@ COPY --from=builder /build/syncerd .
 # Copy example config
 COPY syncerd.yaml.example .
 
-ENTRYPOINT ["./syncerd"]
+ENTRYPOINT ["/app/syncerd"]

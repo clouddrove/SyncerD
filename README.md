@@ -4,10 +4,10 @@
 
 <h1 align="center">SyncerD</h1>
 <p align="center">
-  <strong>Your lightweight Docker registry sync engine.</strong>
+  <strong>Your lightweight Docker registry and git repository sync engine.</strong>
 </p>
 <p align="center">
-  Sync images from Docker Hub to ECR, ACR, GCR & GHCR — beat rate limits, run anywhere.
+  Sync images from Docker Hub to ECR, ACR, GCR & GHCR, and mirror git repositories between GitHub and GitLab. Beat rate limits, run anywhere.
 </p>
 
 <p align="center">
@@ -22,11 +22,12 @@
 
 ## Why SyncerD?
 
-Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limit/) can block pulls in CI and production. **SyncerD** copies images from Docker Hub to your own registries (AWS ECR, Azure ACR, Google GCR, GitHub Container Registry) so you pull from your registry instead — no rate-limit headaches, same images.
+Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limit/) can block pulls in CI and production. **SyncerD** copies images from Docker Hub to your own registries (AWS ECR, Azure ACR, Google GCR, GitHub Container Registry) so you pull from your registry instead — no rate-limit headaches, same images. SyncerD also mirrors git repositories between GitHub and GitLab, so a backup or internal copy of your repos stays in sync on its own schedule.
 
 - **One config, many registries** — Sync the same set of images to ECR, ACR, GCR, and GHCR from a single YAML.
 - **Runs everywhere** — CLI, GitHub Actions, Kubernetes (Helm CronJob). Stateless by default; no DB required.
 - **New tags, automatically** — Watches source tags and syncs only what's missing; optional branded Slack alerts (color-coded Block Kit) on new syncs or failures.
+- **Git mirroring**: Mirror repositories between GitHub and GitLab with filtered discovery, safe push modes, and a guard against overwriting a destination that already has content. See [Git mirroring](#git-mirroring).
 
 ---
 
@@ -38,6 +39,7 @@ Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limi
 - [Usage](#usage)
 - [Examples](#examples)
 - [Configuration](#configuration)
+- [Git mirroring](#git-mirroring)
 - [Contributing & support](#contributing--support)
 
 ---
@@ -92,6 +94,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Helm chart** | Run as a CronJob on Kubernetes; stateless by default (no PVC) |
 | **Slack** | Optional branded Block Kit alerts (color-coded, per-destination grouping) on new syncs and failures (compact/detailed) |
 | **Secure** | Docker Hub via env/secret; destinations via Docker credential config |
+| **Git mirroring** | Mirror repositories between GitHub and GitLab (`git-sync`); filtered discovery, safe push modes, dry run |
 
 ---
 
@@ -102,7 +105,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Go install** | `go install github.com/clouddrove/syncerd@latest` |
 | **From source** | `git clone https://github.com/clouddrove/syncerd.git && cd syncerd && go build -o syncerd ./main.go` |
 | **Releases** | Download the [latest release](https://github.com/clouddrove/syncerd/releases) for your OS/arch |
-| **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest syncerd sync --once` (mount config + auth as needed) |
+| **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest sync --once` (mount config + auth as needed) |
 
 The Docker image is a **multi-arch manifest** supporting `linux/amd64` and `linux/arm64` (AWS Graviton, Apple Silicon).
 
@@ -117,11 +120,13 @@ Requires Go 1.23+ to build from source.
 Add SyncerD to your workflow:
 
 ```yaml
-- uses: clouddrove/syncerd@v1
+- uses: clouddrove/syncerd@v0.0.11
   with:
     config: syncerd.yaml
     once: "true"
 ```
+
+Pin to the latest [release tag](https://github.com/clouddrove/syncerd/releases); a floating `v1` tag will exist once the project reaches a 1.0 release.
 
 Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
 
@@ -214,6 +219,58 @@ Override with `SYNCERD_` prefix:
 - **Docker Hub (source):** Username/password or Personal Access Token (env or config). Credentials are validated at startup.
 - **Destinations (ECR/ACR/GCR/GHCR):** SyncerD uses the default Docker keychain — `docker login`, credential helpers, or GitHub Actions login steps.
 - **ECR:** Tokens expire every 12 hours. Ensure credentials are refreshed before each scheduled sync.
+
+---
+
+## Git mirroring
+
+`syncerd git-sync` mirrors git repositories between hosting providers, replicating branches and tags as a full mirror in either direction. GitHub and GitLab are supported today; Bitbucket, Azure DevOps, and AWS CodeCommit are planned.
+
+**Minimal config:**
+
+```yaml
+git:
+  providers:
+    - name: gh
+      type: github
+      owner: your-github-org
+    - name: gl
+      type: gitlab
+      owner: your-gitlab-group
+
+  mirrors:
+    - name: gh-to-gl
+      source: gh
+      destination: gl
+      create_missing: true
+
+  work_dir: ./syncerd-git-cache
+  state_path: ./syncerd-git-cache/git-state.json
+```
+
+A container deployment should point `work_dir` and `state_path` at a mounted volume instead, e.g. `/var/lib/syncerd/git` (see the [Helm chart](_helm/syncerd/README.md#git-mirroring)).
+
+```bash
+export SYNCERD_GIT_GH_TOKEN=your-github-token
+export SYNCERD_GIT_GL_TOKEN=your-gitlab-token
+./syncerd git-sync --once
+```
+
+**Tokens:** each provider's token is read from an environment variable named after the provider: the provider name, upper cased, with non alphanumeric characters replaced by underscore. A provider named `gh` reads `SYNCERD_GIT_GH_TOKEN`; a provider named `gh-mirrors` reads `SYNCERD_GIT_GH_MIRRORS_TOKEN`.
+
+**Push modes** (`push_mode` on a mirror, default `mirror`):
+
+| Mode | Behavior |
+|------|----------|
+| `mirror` | Replicates the source exactly, deleting destination branches and tags absent at source |
+| `additive` | Force pushes new and updated refs, never deletes; can still overwrite rewritten history at the destination |
+| `fast-forward` | Refuses any non fast-forward update and reports it as a failure |
+
+**Adopt guard:** a mirror refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in once you've confirmed the destination is right.
+
+Run with `--dry-run` to print the ref changes each mirror would make, per repository, without creating, pushing, or deleting anything.
+
+For the full local test procedure, including config validation, idempotency, pruning, the adopt guard, and Slack, see [docs/git-sync-runbook.md](docs/git-sync-runbook.md).
 
 ---
 
