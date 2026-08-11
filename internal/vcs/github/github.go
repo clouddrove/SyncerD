@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -29,6 +30,8 @@ type Config struct {
 }
 
 // Provider talks to the GitHub REST API and to github.com over git.
+//
+// A Provider must not be copied after first use.
 type Provider struct {
 	name      string
 	owner     string
@@ -37,6 +40,7 @@ type Provider struct {
 	token     string
 	hc        *http.Client
 
+	ownerMu    sync.Mutex
 	ownerIsOrg *bool
 }
 
@@ -220,7 +224,14 @@ func resolveNext(current, link string) (string, error) {
 // answer is cached because it cannot change during a run, and both listing
 // and creation need it. A 404 means the owner is not an org, which is the
 // normal personal account case rather than an error.
+//
+// The lock is held across the lookup so that concurrent callers resolve it
+// once rather than racing on the cache. The engine's worker pool shares one
+// Provider across goroutines.
 func (p *Provider) ownerKind(ctx context.Context) (bool, error) {
+	p.ownerMu.Lock()
+	defer p.ownerMu.Unlock()
+
 	if p.ownerIsOrg != nil {
 		return *p.ownerIsOrg, nil
 	}
@@ -236,6 +247,7 @@ func (p *Provider) ownerKind(ctx context.Context) (bool, error) {
 		p.ownerIsOrg = &isOrg
 		return false, nil
 	default:
+		// A transient failure is not cached, so a later call can retry.
 		return false, err
 	}
 }

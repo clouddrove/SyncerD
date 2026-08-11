@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -215,6 +216,90 @@ func TestListReposDoesNotFallBackOnNonNotFoundError(t *testing.T) {
 	p, _ := newProvider(t, mux)
 	if _, err := p.ListRepos(context.Background()); err == nil {
 		t.Fatal("expected the 403 to be surfaced")
+	}
+}
+
+func TestListReposDoesNotFallBackAfterPartialCollection(t *testing.T) {
+	// Page one succeeds, page two 404s. That is a real failure, not a
+	// signal that the owner is a personal account, so the already
+	// collected repositories must not be silently discarded and refetched
+	// from the user endpoint.
+	var page2URL string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<%s?page=2>; rel="next"`, page2URL))
+		writeJSON(w, []map[string]any{
+			{"name": "first", "full_name": "acme/first", "default_branch": "main"},
+		})
+	})
+	mux.HandleFunc("/users/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a 404 partway through must not trigger the personal account fallback")
+	})
+
+	p, srv := newProvider(t, mux)
+	page2URL = srv.URL + "/orgs/acme/repos"
+
+	if _, err := p.ListRepos(context.Background()); err == nil {
+		t.Fatal("a 404 on a later page must surface as an error")
+	}
+}
+
+func TestIsNotFoundSeesThroughWrapping(t *testing.T) {
+	base := &httpError{status: http.StatusNotFound, body: "Not Found"}
+	wrapped := fmt.Errorf("github: determine whether %q is an organisation: %w", "acme", base)
+
+	if !isNotFound(wrapped) {
+		t.Error("isNotFound must unwrap; a bare type assertion would miss this")
+	}
+	if isNotFound(fmt.Errorf("plain error")) {
+		t.Error("isNotFound must not match an unrelated error")
+	}
+}
+
+func TestEnsureRepoIsConcurrencySafe(t *testing.T) {
+	var mu sync.Mutex
+	orgLookups := 0
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		orgLookups++
+		mu.Unlock()
+		writeJSON(w, map[string]any{"login": "acme"})
+	})
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]any{"name": "created", "full_name": "acme/created"})
+	})
+	mux.HandleFunc("/repos/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+
+	p, _ := newProvider(t, mux)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{
+				Path: fmt.Sprintf("repo-%d", n), Visibility: "private",
+			}); err != nil {
+				t.Errorf("ensure %d: %v", n, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if orgLookups != 1 {
+		t.Errorf("owner kind resolved %d times, want 1", orgLookups)
 	}
 }
 
