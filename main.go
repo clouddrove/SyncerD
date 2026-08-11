@@ -29,8 +29,8 @@ func main() {
 
 SyncerD synchronizes Docker images from Docker Hub to other container
 registries (ECR, ACR, GCR, GitHub Container Registry), and mirrors git
-repositories between GitHub, GitLab, Bitbucket, Azure DevOps, and AWS
-CodeCommit.`,
+repositories between GitHub and GitLab. Bitbucket, Azure DevOps, and AWS
+CodeCommit are planned but not yet supported.`,
 		Version: fmt.Sprintf("%s (commit: %s)", version, commit),
 	}
 
@@ -82,8 +82,9 @@ CodeCommit.`,
 	gitSyncCmd := &cobra.Command{
 		Use:   "git-sync",
 		Short: "Mirror git repositories between hosting providers",
-		Long: `Mirror git repositories between GitHub, GitLab, Bitbucket, Azure DevOps,
-and AWS CodeCommit in any direction.
+		Long: `Mirror git repositories between GitHub and GitLab in either direction.
+Bitbucket, Azure DevOps, and AWS CodeCommit are planned but not yet
+supported.
 
 Repositories are discovered from the source provider, filtered, and mirrored
 as a full replica of all branches and tags. Unchanged repositories are

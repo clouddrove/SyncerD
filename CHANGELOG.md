@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New `syncerd git-sync` subcommand mirrors git repositories between GitHub and GitLab (Bitbucket, Azure DevOps, and AWS CodeCommit are planned but not yet supported). Repositories are discovered from the source provider and filtered by name glob, archived, and fork status; unchanged repositories are detected via a source ref fingerprint and skipped without cloning
+- Three push modes control how a mirror updates its destination: `mirror` (default) replicates the source exactly, deleting destination branches and tags absent at source; `additive` never deletes; `fast-forward` refuses any non fast-forward update and reports it as a failure
+- An adopt guard refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in
+- `--dry-run` reports what would be created, pushed, and pruned, per repository and per ref, without writing anything
+- Helm chart: opt-in `gitSync` CronJob (`gitSync.enabled: false` by default) runs on its own schedule, separate from image sync, with its own persistence for the clone cache and mirror state
+- Docker image now installs `git`, required for `git-sync`; image sync behaviour is unchanged
+
 ## [0.0.11] - 2026-06-29
 
 ### Changed
