@@ -308,7 +308,7 @@ func TestCloneURLAndCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	if got := p.CloneURL("acme/app"); got != "https://github.com/acme/app.git" {
+	if got := p.CloneURL("app"); got != "https://github.com/acme/app.git" {
 		t.Errorf("CloneURL = %q", got)
 	}
 
@@ -325,8 +325,8 @@ func TestCloneURLAndCredential(t *testing.T) {
 	if cred.Secret != "ghp_test_token" {
 		t.Errorf("Secret not passed through")
 	}
-	if !p.SupportsNesting() {
-		t.Error("GitHub supports owner/repo paths")
+	if p.SupportsNesting() {
+		t.Error("GitHub repository names cannot contain a slash")
 	}
 }
 
@@ -335,7 +335,7 @@ func TestCloneURLForEnterprise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	if got := p.CloneURL("acme/app"); got != "https://ghe.example.com/acme/app.git" {
+	if got := p.CloneURL("app"); got != "https://ghe.example.com/acme/app.git" {
 		t.Errorf("CloneURL = %q", got)
 	}
 }
@@ -343,6 +343,39 @@ func TestCloneURLForEnterprise(t *testing.T) {
 func TestNewRequiresOwner(t *testing.T) {
 	if _, err := New(Config{Name: "gh", Token: "t"}); err == nil {
 		t.Fatal("expected an error when owner is missing")
+	}
+}
+
+func TestGitHubRejectsNestedNames(t *testing.T) {
+	p, err := New(Config{Name: "gh", Owner: "acme", Token: "ghp_test_token"})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	if p.SupportsNesting() {
+		t.Error("GitHub repository names cannot contain a slash")
+	}
+	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "team/app"}); err == nil {
+		t.Error("EnsureRepo must reject a nested name rather than silently dropping a segment")
+	}
+	if err := p.SetDefaultBranch(context.Background(), "team/app", "main"); err == nil {
+		t.Error("SetDefaultBranch must reject a nested name")
+	}
+}
+
+func TestListReposRefusesToLoopOnRepeatedPage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		// Always advertise a next link pointing back at this same URL,
+		// which would loop forever without the visited set.
+		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="next"`, r.URL.String()))
+		writeJSON(w, []map[string]any{
+			{"name": "loop", "full_name": "acme/loop", "default_branch": "main"},
+		})
+	})
+
+	p, _ := newProvider(t, mux)
+	if _, err := p.ListRepos(context.Background()); err == nil {
+		t.Fatal("a repeated next page must be refused rather than looped")
 	}
 }
 

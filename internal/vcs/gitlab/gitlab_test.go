@@ -137,7 +137,7 @@ func TestCloneURLAndCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	if got := p.CloneURL("acme/sub/app"); got != "https://gitlab.com/acme/sub/app.git" {
+	if got := p.CloneURL("sub/app"); got != "https://gitlab.com/acme/sub/app.git" {
 		t.Errorf("CloneURL = %q", got)
 	}
 
@@ -156,6 +156,71 @@ func TestCloneURLAndCredential(t *testing.T) {
 func TestNewRequiresOwner(t *testing.T) {
 	if _, err := New(Config{Name: "gl", Token: "t"}); err == nil {
 		t.Fatal("expected an error when owner is missing")
+	}
+}
+
+func TestEnsureRepoResolvesSubgroupBeneathOwner(t *testing.T) {
+	var created map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/acme%2Fteam-a%2Fapp", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"404 Project Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/api/v4/groups/acme%2Fteam-a", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"id": 77, "full_path": "acme/team-a"})
+	})
+	mux.HandleFunc("/api/v4/groups/team-a", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a nested name must resolve beneath the configured owner, not against a top level group")
+	})
+	mux.HandleFunc("/api/v4/projects", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&created)
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]any{"path": "app", "path_with_namespace": "acme/team-a/app"})
+	})
+
+	p := newProvider(t, mux)
+	got, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "team-a/app", Visibility: "private"})
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if got.Path != "acme/team-a/app" {
+		t.Errorf("Path = %q, want acme/team-a/app", got.Path)
+	}
+	if created["namespace_id"] != float64(77) {
+		t.Errorf("namespace_id = %v, want 77", created["namespace_id"])
+	}
+}
+
+func TestCloneURLIsRelativeToOwner(t *testing.T) {
+	p, err := New(Config{Name: "gl", Owner: "acme", Token: "glpat_test_token"})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	if got := p.CloneURL("app"); got != "https://gitlab.com/acme/app.git" {
+		t.Errorf("CloneURL(app) = %q", got)
+	}
+	if got := p.CloneURL("team-a/app"); got != "https://gitlab.com/acme/team-a/app.git" {
+		t.Errorf("CloneURL(team-a/app) = %q", got)
+	}
+}
+
+func TestListReposRefusesToLoopOnRepeatedPage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		// Always advertise the same next page, which would loop forever
+		// without the visited set.
+		w.Header().Set("X-Next-Page", "2")
+		writeJSON(w, []map[string]any{
+			{"path": "loop", "path_with_namespace": "acme/loop", "default_branch": "main"},
+		})
+	})
+
+	p := newProvider(t, mux)
+	if _, err := p.ListRepos(context.Background()); err == nil {
+		t.Fatal("a repeated next page must be refused rather than looped")
 	}
 }
 

@@ -28,8 +28,6 @@ type Config struct {
 }
 
 // Provider talks to the GitLab REST API and to GitLab over git.
-//
-// A Provider must not be copied after first use.
 type Provider struct {
 	name  string
 	owner string
@@ -69,12 +67,11 @@ func (p *Provider) Type() string { return "gitlab" }
 // SupportsNesting reports that GitLab supports nested group paths.
 func (p *Provider) SupportsNesting() bool { return true }
 
-// CloneURL returns the HTTPS git URL for a project path.
+// CloneURL returns the HTTPS git URL for a project path relative to the
+// configured owner. A path containing slashes addresses a subgroup beneath
+// the owner, never a top level group.
 func (p *Provider) CloneURL(path string) string {
-	if !strings.Contains(path, "/") {
-		path = p.owner + "/" + path
-	}
-	return fmt.Sprintf("%s/%s.git", p.base, path)
+	return fmt.Sprintf("%s/%s/%s.git", p.base, p.owner, path)
 }
 
 // GitCredential returns the basic auth pair GitLab expects for HTTPS git.
@@ -158,10 +155,7 @@ func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
 
 // EnsureRepo creates the project if it does not already exist.
 func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo, error) {
-	full := spec.Path
-	if !strings.Contains(full, "/") {
-		full = p.owner + "/" + full
-	}
+	full := p.owner + "/" + strings.Trim(spec.Path, "/")
 
 	getURL := fmt.Sprintf("%s/api/v4/projects/%s", p.base, url.PathEscape(full))
 	body, _, err := p.do(ctx, http.MethodGet, getURL, nil)
@@ -182,6 +176,9 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 	// owner kind, a namespace id is only needed on the (rare) creation
 	// path, not on every list or ensure call, so the extra request is not
 	// worth the complexity of a guarded cache.
+	//
+	// full always begins with the configured owner, so it always contains
+	// at least one slash; the split below needs no extra guard for that.
 	namespace := full[:strings.LastIndex(full, "/")]
 	nsID, err := p.namespaceID(ctx, namespace)
 	if err != nil {
@@ -239,10 +236,7 @@ func (p *Provider) namespaceID(ctx context.Context, groupPath string) (int, erro
 
 // SetDefaultBranch aligns the destination default branch with the source.
 func (p *Provider) SetDefaultBranch(ctx context.Context, path, branch string) error {
-	full := path
-	if !strings.Contains(full, "/") {
-		full = p.owner + "/" + full
-	}
+	full := p.owner + "/" + strings.Trim(path, "/")
 	endpoint := fmt.Sprintf("%s/api/v4/projects/%s", p.base, url.PathEscape(full))
 	_, _, err := p.do(ctx, http.MethodPut, endpoint, map[string]any{"default_branch": branch})
 	return err

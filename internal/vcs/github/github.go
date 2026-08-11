@@ -82,15 +82,17 @@ func (p *Provider) Name() string { return p.name }
 // Type returns the provider type string.
 func (p *Provider) Type() string { return "github" }
 
-// SupportsNesting reports that GitHub repository paths are owner/repo.
-func (p *Provider) SupportsNesting() bool { return true }
+// SupportsNesting reports false. A GitHub repository name cannot contain a
+// slash: the only namespace is the owner, which is configured separately.
+// A name template that renders a nested name is rejected before any call
+// reaches this provider.
+func (p *Provider) SupportsNesting() bool { return false }
 
-// CloneURL returns the HTTPS git URL for a repository path.
-func (p *Provider) CloneURL(path string) string {
-	if !strings.Contains(path, "/") {
-		path = p.owner + "/" + path
-	}
-	return fmt.Sprintf("%s/%s.git", p.cloneBase, path)
+// CloneURL returns the HTTPS git URL for a repository name under the
+// configured owner. The name is relative to the owner, matching what
+// EnsureRepo creates.
+func (p *Provider) CloneURL(name string) string {
+	return fmt.Sprintf("%s/%s/%s.git", p.cloneBase, p.owner, name)
 }
 
 // GitCredential returns the basic auth pair GitHub expects for HTTPS git.
@@ -255,8 +257,8 @@ func (p *Provider) ownerKind(ctx context.Context) (bool, error) {
 // EnsureRepo creates the repository if it does not already exist.
 func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo, error) {
 	name := spec.Path
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+	if strings.Contains(name, "/") {
+		return vcs.Repo{}, fmt.Errorf("github: repository name %q contains a slash, which GitHub does not support; the owner is configured separately", name)
 	}
 
 	getURL := fmt.Sprintf("%s/repos/%s/%s", p.apiURL, p.owner, name)
@@ -310,8 +312,8 @@ func (p *Provider) EnsureRepo(ctx context.Context, spec vcs.RepoSpec) (vcs.Repo,
 // SetDefaultBranch aligns the destination default branch with the source.
 func (p *Provider) SetDefaultBranch(ctx context.Context, path, branch string) error {
 	name := path
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+	if strings.Contains(name, "/") {
+		return fmt.Errorf("github: repository name %q contains a slash, which GitHub does not support; the owner is configured separately", name)
 	}
 	url := fmt.Sprintf("%s/repos/%s/%s", p.apiURL, p.owner, name)
 	_, _, err := p.do(ctx, http.MethodPatch, url, map[string]any{"default_branch": branch})
