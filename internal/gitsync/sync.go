@@ -106,6 +106,21 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		return rep, err
 	}
 
+	// The lock guards WorkDir, the clone cache directory, against a second
+	// SyncerD process running concurrently against it. It is taken even on
+	// a dry run: SyncCache below still populates the cache during a dry
+	// run, because "git push --dry-run" needs the objects locally to
+	// report what it would send. Only an empty WorkDir (no cache in use)
+	// skips the lock.
+	if e.opts.WorkDir != "" {
+		lock, err := AcquireLock(e.opts.WorkDir)
+		if err != nil {
+			rep.EndedAt = time.Now().UTC()
+			return rep, err
+		}
+		defer func() { _ = lock.Release() }()
+	}
+
 	// save persists state on every exit path below, not just the happy
 	// path, so a FailFast abort does not discard the fingerprint of
 	// repositories this run already mirrored before it stopped.
