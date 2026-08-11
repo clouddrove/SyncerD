@@ -2,6 +2,8 @@ package gitsync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -152,6 +154,18 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		selected := vcs.Apply(m.Filter, repos)
 		log.Printf("mirror %s: %d repositories discovered, %d selected", m.Name, len(repos), len(selected))
 
+		if err := e.checkDestinationCollisions(m, selected); err != nil {
+			e.addFailure(GitFailure{Mirror: m.Name, Stage: "discover", Error: e.redact(err.Error())})
+			if e.opts.FailFast {
+				rep.EndedAt = time.Now().UTC()
+				if serr := save(); serr != nil {
+					return rep, serr
+				}
+				return rep, err
+			}
+			continue
+		}
+
 		if err := e.runMirror(ctx, m, selected); err != nil {
 			rep.EndedAt = time.Now().UTC()
 			if serr := save(); serr != nil {
@@ -171,6 +185,27 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		return rep, fmt.Errorf("git sync completed with %d failures", len(rep.Failures))
 	}
 	return rep, nil
+}
+
+// checkDestinationCollisions refuses a mirror in which two source
+// repositories render to the same destination name. Left alone, each run
+// would have the colliding repositories force prune one another.
+func (e *Engine) checkDestinationCollisions(m Mirror, repos []vcs.Repo) error {
+	seen := make(map[string]string, len(repos))
+	for _, r := range repos {
+		name, err := m.Names.Render(r)
+		if err != nil {
+			// A render failure is reported per repository later, with the
+			// repository named. Skip it here rather than failing the whole
+			// mirror on one bad name.
+			continue
+		}
+		if other, ok := seen[name]; ok {
+			return fmt.Errorf("source repositories %q and %q both render to destination %q; adjust name_template so every repository maps to a distinct destination", other, r.Path, name)
+		}
+		seen[name] = r.Path
+	}
+	return nil
 }
 
 // runMirror processes one mirror's repositories through a bounded pool.
@@ -195,7 +230,7 @@ func (e *Engine) runMirror(ctx context.Context, m Mirror, repos []vcs.Repo) erro
 						Mirror:     m.Name,
 						SourceRepo: repo.Path,
 						Stage:      "worker",
-						Error:      fmt.Sprintf("panic: %v", rec),
+						Error:      e.redact(fmt.Sprintf("panic: %v", rec)),
 					})
 				}
 			}()
@@ -257,7 +292,21 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	}
 
 	fp := Fingerprint(refs)
-	if prev, ok := e.stateGet(m.Name, repo.Path); ok && prev.Fingerprint == fp {
+	prev, hadState := e.stateGet(m.Name, repo.Path)
+
+	// A recorded destination that no longer matches the rendered one means
+	// the mirror was retargeted, by a name_template edit, a destination
+	// change, or a provider owner change. The old fingerprint describes a
+	// different destination, and the new destination has never been seen,
+	// so treat this as a first run: recompute, and let the adopt guard
+	// inspect what is actually there.
+	hasState := hadState && prev.DestPath == destName
+	if hadState && !hasState {
+		log.Printf("mirror %s: %s destination changed from %q to %q, treating as a first run",
+			m.Name, repo.Path, prev.DestPath, destName)
+	}
+
+	if hasState && prev.Fingerprint == fp {
 		log.Printf("mirror %s: %s unchanged, skipping", m.Name, repo.Path)
 		e.addSkip()
 		return
@@ -275,7 +324,6 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	// cannot tell an absent repository from an unreachable one, so the
 	// only safe reading is that we do not know what is there.
 	destRefs, destErr := e.opts.Runner.LsRemote(ctx, destURL, dstCred)
-	_, hasState := e.stateGet(m.Name, repo.Path)
 
 	needsCreate := false
 	if destErr != nil {
@@ -372,6 +420,13 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		return
 	}
 
+	if e.opts.DryRun && len(res.Lines) > 0 {
+		log.Printf("mirror %s: %s -> %s would apply %d ref change(s):", m.Name, repo.Path, destName, len(res.Lines))
+		for _, line := range res.Lines {
+			log.Printf("  %s", line)
+		}
+	}
+
 	if !e.opts.DryRun {
 		e.stateMark(m.Name, repo.Path, destName, fp)
 
@@ -393,9 +448,17 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	log.Printf("mirror %s: %s -> %s (%d pushed, %d deleted)", m.Name, repo.Path, destName, res.Pushed, res.Deleted)
 }
 
-// cacheKey turns a repository path into a flat directory name.
+// cacheKey turns a repository path into a flat directory name. The sha256
+// suffix keeps it collision free: two different paths can flatten to the
+// same string once slashes are replaced, and a shared cache would let two
+// workers push each other's refs.
 func cacheKey(r vcs.Repo) string {
-	return strings.ReplaceAll(r.Path, "/", "__")
+	sum := sha256.Sum256([]byte(r.Path))
+	flat := strings.ReplaceAll(r.Path, "/", "__")
+	if len(flat) > 64 {
+		flat = flat[:64]
+	}
+	return flat + "-" + hex.EncodeToString(sum[:])[:12]
 }
 
 // redact strips configured secrets from any string bound for a failure

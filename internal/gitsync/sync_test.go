@@ -316,6 +316,76 @@ func TestEngineFailFastAbortsOnWorkerPanic(t *testing.T) {
 	}
 }
 
+func TestEngineRefusesCollidingDestinationNames(t *testing.T) {
+	eng, m, ensurer := newEngineFixture(t)
+
+	// Two distinct source repositories whose default template renders the
+	// same destination name.
+	m.Source = &fakeLister{repos: []vcs.Repo{
+		{Name: "docs", Owner: "acme", Path: "acme/team-a/docs", DefaultBranch: "main", CloneURL: "unused"},
+		{Name: "docs", Owner: "acme", Path: "acme/team-b/docs", DefaultBranch: "main", CloneURL: "unused"},
+	}}
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err == nil {
+		t.Fatal("colliding destination names must fail the mirror")
+	}
+	if len(rep.Failures) != 1 || rep.Failures[0].Stage != "discover" {
+		t.Fatalf("expected one discover failure, got %+v", rep.Failures)
+	}
+	if len(ensurer.created) != 0 {
+		t.Errorf("nothing should have been created: %v", ensurer.created)
+	}
+	if len(rep.Mirrored) != 0 {
+		t.Errorf("nothing should have been mirrored: %+v", rep.Mirrored)
+	}
+}
+
+func TestCacheKeyIsCollisionFree(t *testing.T) {
+	a := cacheKey(vcs.Repo{Path: "group/sub/repo"})
+	b := cacheKey(vcs.Repo{Path: "group/sub__repo"})
+	if a == b {
+		t.Fatalf("distinct paths must not share a cache directory, both produced %q", a)
+	}
+	if cacheKey(vcs.Repo{Path: "group/sub/repo"}) != a {
+		t.Error("cacheKey must be deterministic")
+	}
+}
+
+func TestEngineRetargetedDestinationInvalidatesState(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+	ctx := context.Background()
+
+	if _, err := eng.Run(ctx, []Mirror{m}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	if _, ok := eng.opts.State.Get(m.Name, "acme/app"); !ok {
+		t.Fatal("seed run should have recorded state")
+	}
+
+	// Simulate a name_template edit or destination change: the state still
+	// says "app" but the template now renders "renamed".
+	names, err := vcs.ParseNameTemplate("renamed")
+	if err != nil {
+		t.Fatalf("template: %v", err)
+	}
+	m.Names = names
+
+	rep, err := eng.Run(ctx, []Mirror{m})
+	if err != nil {
+		t.Fatalf("retarget run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if len(rep.Mirrored) != 1 {
+		t.Fatalf("a retargeted destination must not be skipped, got %+v", rep.Mirrored)
+	}
+	if rs, ok := eng.opts.State.Get(m.Name, "acme/app"); !ok || rs.DestPath != "renamed" {
+		t.Errorf("state should now point at the new destination, got %+v", rs)
+	}
+}
+
 func TestEngineConcurrentReposDoNotRaceOnState(t *testing.T) {
 	eng, m, _ := newEngineFixture(t)
 
