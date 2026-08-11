@@ -18,13 +18,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": { "type": "boolean" },
         "schedule": { "type": "string", "minLength": 1 },
         "concurrencyPolicy": { "type": "string", "enum": ["Allow", "Forbid", "Replace"] },
         "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
         "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
         "restartPolicy": { "type": "string", "enum": ["OnFailure", "Never"] }
       },
-      "required": ["schedule"]
+      "required": ["enabled", "schedule"]
     },
     "persistence": {
       "type": "object",

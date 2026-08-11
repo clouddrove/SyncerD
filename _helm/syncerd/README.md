@@ -25,6 +25,7 @@ helm install syncerd ./_helm/syncerd -n syncerd --create-namespace -f my-values.
 | `image.repository` | SyncerD image | `ghcr.io/clouddrove/syncerd` |
 | `image.tag` | Image tag | `latest` |
 | `imagePullSecrets` | Secrets to pull the SyncerD image itself (e.g. from a private registry) | `[]` |
+| `cronjob.enabled` | Run the image sync CronJob. Set `false` for a deployment that only wants git mirroring | `true` |
 | `cronjob.schedule` | Cron schedule (K8s CronJob) | `0 0 */21 * *` (every 3 weeks) |
 | `persistence.enabled` | Use PVC for state file; stateless when false | `false` |
 | `persistence.size` | PVC size when persistence enabled | `1Gi` |
@@ -141,6 +142,84 @@ kubectl create secret generic syncerd-docker-config \
   --from-file=.dockerconfigjson=$HOME/.docker/config.json \
   --type=kubernetes.io/dockerconfigjson \
   -n syncerd --dry-run=client -o yaml | kubectl apply -f -
+```
+
+## Git mirroring
+
+The chart can also run `syncerd git-sync` as a **second, independent CronJob**, so it can keep its own schedule apart from image sync. Disabled by default.
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `gitSync.enabled` | Run the git mirroring CronJob | `false` |
+| `gitSync.schedule` | Cron schedule for the gitsync CronJob | `0 */6 * * *` |
+| `gitSync.persistence.enabled` | Use a PVC for the clone cache and mirror state; `emptyDir` when false (one-shot testing only, see below) | `true` |
+| `gitSync.persistence.size` | PVC size when persistence enabled | `10Gi` |
+| `gitSync.workDir` | Clone cache path inside the container | `/gitdata/cache` |
+| `gitSync.statePath` | Mirror state file path inside the container | `/gitdata/cache/git-state.json` |
+| `gitSync.concurrency` | Parallel repository mirrors per run | `4` |
+| `gitSync.providers` | List of git providers (`name`, `type`, `owner`, ...); tokens are never set here | `[]` |
+| `gitSync.mirrors` | List of mirrors (`name`, `source`, `destination`, `push_mode`, ...) | `[]` |
+| `gitSync.resources` | CPU/memory limits for the gitsync job | see values.yaml |
+
+`cronjob.enabled` and `gitSync.enabled` are independent: set `cronjob.enabled: false` and `gitSync.enabled: true` for a deployment that only mirrors git repositories.
+
+### Why the cache and state share one volume
+
+`gitSync.workDir` (the clone cache) and `gitSync.statePath` (the ref-fingerprint state) both live under `/gitdata`, backed by the same PVC. Losing state while keeping the cache makes every repository fail the adopt guard on the next run, because SyncerD no longer knows it populated those destinations itself. Keeping both on one volume means a lost volume loses both together, which is a clean first-run state, not a partial one.
+
+### Git provider credentials
+
+Provider tokens, and the CodeCommit static credential fallback, are never written to the ConfigMap. They are read from a Secret as environment variables named `SYNCERD_GIT_<KEY>_TOKEN`, `SYNCERD_GIT_<KEY>_GIT_USERNAME`, and `SYNCERD_GIT_<KEY>_GIT_PASSWORD`, where `<KEY>` is derived from the provider's `name` in `gitSync.providers`: upper cased, with every non-alphanumeric character replaced by underscore. A provider named `gh` reads `SYNCERD_GIT_GH_TOKEN`; a provider named `gh-mirrors` reads `SYNCERD_GIT_GH_MIRRORS_TOKEN`.
+
+Set them with `existingSecret` (recommended) or inline via `secret.gitTokens` / `secret.gitCredentials`:
+
+```bash
+kubectl create secret generic syncerd-creds -n syncerd \
+  --from-literal=SYNCERD_GIT_GH_TOKEN=ghp_your_token \
+  --from-literal=SYNCERD_GIT_GL_TOKEN=glpat-your_token
+```
+
+```yaml
+existingSecret: syncerd-creds
+```
+
+Or inline (not recommended for production):
+
+```yaml
+secret:
+  gitTokens:
+    gh: "ghp_your_token"
+    gl: "glpat-your_token"
+  # gitCredentials keys map to SYNCERD_GIT_<KEY>_GIT_USERNAME / _GIT_PASSWORD,
+  # used only by CodeCommit's static credential fallback:
+  # gitCredentials:
+  #   cc:
+  #     username: "..."
+  #     password: "..."
+```
+
+### Minimal example
+
+```yaml
+cronjob:
+  enabled: false
+
+gitSync:
+  enabled: true
+  providers:
+    - name: gh
+      type: github
+      owner: my-org
+    - name: gl
+      type: gitlab
+      owner: my-group
+  mirrors:
+    - name: gh-to-gl
+      source: gh
+      destination: gl
+      create_missing: true
+
+existingSecret: syncerd-creds
 ```
 
 ## Run a sync manually

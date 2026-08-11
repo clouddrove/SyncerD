@@ -1,4 +1,4 @@
-{{- if .Values.persistence.enabled }}
+{{- if and .Values.cronjob.enabled .Values.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -36,4 +36,4 @@ COPY --from=builder /build/syncerd .
 # Copy example config
 COPY syncerd.yaml.example .
 
-ENTRYPOINT ["./syncerd"]
+ENTRYPOINT ["/app/syncerd"]

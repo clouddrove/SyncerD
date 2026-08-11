@@ -105,7 +105,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **Go install** | `go install github.com/clouddrove/syncerd@latest` |
 | **From source** | `git clone https://github.com/clouddrove/syncerd.git && cd syncerd && go build -o syncerd ./main.go` |
 | **Releases** | Download the [latest release](https://github.com/clouddrove/syncerd/releases) for your OS/arch |
-| **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest syncerd sync --once` (mount config + auth as needed) |
+| **Docker** | `docker run ghcr.io/clouddrove/syncerd:latest sync --once` (mount config + auth as needed) |
 
 The Docker image is a **multi-arch manifest** supporting `linux/amd64` and `linux/arm64` (AWS Graviton, Apple Silicon).
 
@@ -120,11 +120,13 @@ Requires Go 1.23+ to build from source.
 Add SyncerD to your workflow:
 
 ```yaml
-- uses: clouddrove/syncerd@v1
+- uses: clouddrove/syncerd@v0.0.11
   with:
     config: syncerd.yaml
     once: "true"
 ```
+
+Pin to the latest [release tag](https://github.com/clouddrove/syncerd/releases); a floating `v1` tag will exist once the project reaches a 1.0 release.
 
 Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
 
@@ -242,9 +244,11 @@ git:
       destination: gl
       create_missing: true
 
-  work_dir: /var/lib/syncerd/git
-  state_path: /var/lib/syncerd/git/git-state.json
+  work_dir: ./syncerd-git-cache
+  state_path: ./syncerd-git-cache/git-state.json
 ```
+
+A container deployment should point `work_dir` and `state_path` at a mounted volume instead, e.g. `/var/lib/syncerd/git` (see the [Helm chart](_helm/syncerd/README.md#git-mirroring)).
 
 ```bash
 export SYNCERD_GIT_GH_TOKEN=your-github-token
@@ -259,7 +263,7 @@ export SYNCERD_GIT_GL_TOKEN=your-gitlab-token
 | Mode | Behavior |
 |------|----------|
 | `mirror` | Replicates the source exactly, deleting destination branches and tags absent at source |
-| `additive` | Pushes new and updated refs, never deletes |
+| `additive` | Force pushes new and updated refs, never deletes; can still overwrite rewritten history at the destination |
 | `fast-forward` | Refuses any non fast-forward update and reports it as a failure |
 
 **Adopt guard:** a mirror refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in once you've confirmed the destination is right.

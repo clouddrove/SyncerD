@@ -102,6 +102,8 @@ fail_fast: false # false = best-effort per image/tag; true = stop on first error
 #
 #   # work_dir (clone cache) and state_path (fingerprint state) MUST share a
 #   # volume. Losing state while keeping the cache makes every repository
-#   # fail the adopt guard on the next run.
-#   work_dir: /var/lib/syncerd/git
-#   state_path: /var/lib/syncerd/git/git-state.json
+#   # fail the adopt guard on the next run. The paths below are for a local
+#   # run; a container deployment should point both at a mounted volume
+#   # instead, e.g. /var/lib/syncerd/git.
+#   work_dir: ./syncerd-git-cache
+#   state_path: ./syncerd-git-cache/git-state.json

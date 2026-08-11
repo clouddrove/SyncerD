@@ -21,9 +21,11 @@ inputs:
 
 runs:
   using: "docker"
-  # Marketplace best practice: pin to a major tag (v1).
-  # The release workflow publishes ghcr.io/clouddrove/syncerd:v1.
-  image: "docker://ghcr.io/clouddrove/syncerd:v1"
+  # Marketplace best practice is to pin to a major tag, but v1 has not been
+  # released yet (project is still 0.x). The release workflow's
+  # type=semver,pattern=v{{major}} produces v0 for the current line; this
+  # must move to v1 once a 1.0 release ships.
+  image: "docker://ghcr.io/clouddrove/syncerd:v0"
   args:
     - "${{ inputs.command }}"
     - "--config"

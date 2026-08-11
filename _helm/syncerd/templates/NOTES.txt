@@ -1,3 +1,4 @@
+{{- if .Values.cronjob.enabled }}
 SyncerD has been installed as a CronJob (stateless by default; no PVC).
 
   Chart:    {{ .Chart.Name }}-{{ .Chart.Version }}
@@ -19,6 +20,11 @@ To run a sync manually:
 
 To watch logs of the last run:
   kubectl logs -l app.kubernetes.io/name={{ include "syncerd.name" . }} -n {{ .Release.Namespace }} --tail=100
+{{- else }}
+SyncerD chart installed (Chart: {{ .Chart.Name }}-{{ .Chart.Version }}).
+
+Image sync CronJob is disabled (cronjob.enabled: false).
+{{- end }}
 {{- if .Values.gitSync.enabled }}
 
 Git mirroring is enabled as a second CronJob: {{ include "syncerd.fullname" . }}-gitsync

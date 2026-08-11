@@ -10,6 +10,10 @@ image:
 # Kubernetes CronJob schedule (when to run sync). Default: every 3 weeks at midnight UTC
 # https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
 cronjob:
+  # Set to false to disable the image sync CronJob entirely, e.g. for a
+  # deployment that only wants gitSync mirroring. Defaults to true so
+  # existing installs are unaffected.
+  enabled: true
   schedule: "0 0 */21 * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3

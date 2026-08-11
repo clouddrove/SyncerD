@@ -36,19 +36,22 @@ git --version # 2.30 or newer, git-sync refuses below this
 ```
 
 `git` must be on `PATH`. `git-sync` shells out to it; there is no pure-Go
-fallback. The published Docker image does **not** yet install git, so test with
-a local build, not the image.
+fallback. The published Docker image now installs git, but a local build is
+still the fastest way to iterate through this runbook.
 
 ---
 
 ## Phase 0: Build
 
 ```bash
-cd /Users/anmol/workspace/cloudwizz/SyncerD
-git checkout feat/git-sync
+cd path/to/syncerd
 
 go build -o ./syncerd .
 ./syncerd --version
+
+# Put the binary on PATH so later phases, which cd into a scratch
+# directory, can call it as plain `syncerd`.
+export PATH="$PWD:$PATH"
 ```
 
 Confirm all three release targets compile:
@@ -129,7 +132,7 @@ git:
       source: gh
       destination: gh
 EOF
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config 01-no-token.yaml
+syncerd git-sync --once --config 01-no-token.yaml
 ```
 
 ```
@@ -156,7 +159,7 @@ git:
       source: gh
       destination: bb
 EOF
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config 02-bitbucket.yaml
+syncerd git-sync --once --config 02-bitbucket.yaml
 ```
 
 ```
@@ -184,7 +187,7 @@ git:
       destination: gh
       name_template: "{{ .Owner }}/{{ .Repo }}"
 EOF
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config 03-nested.yaml
+syncerd git-sync --once --config 03-nested.yaml
 ```
 
 ```
@@ -258,7 +261,7 @@ glob keeps everything else in the org out of scope.
 ## Phase 3: Dry run, read only
 
 ```bash
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --dry-run --config mirror.yaml
+syncerd git-sync --dry-run --config mirror.yaml
 ```
 
 `--dry-run` implies `--once`. It never creates a destination repository, never
@@ -296,7 +299,7 @@ Then check your GitLab group in a browser: no projects should have appeared.
 > content, but nothing protects you from choosing the wrong empty group.
 
 ```bash
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 Expect per repository:
@@ -330,7 +333,7 @@ The `ls-remote` output must show every branch and tag from the source. Only
 Run the exact same command again with nothing changed:
 
 ```bash
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 ```
@@ -357,7 +360,7 @@ git push origin feature/runbook
 ```
 
 ```bash
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 Expect exactly one repository to move and the other to skip:
@@ -380,7 +383,7 @@ Delete that branch at the source and rerun:
 
 ```bash
 git push origin --delete feature/runbook
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 ```
@@ -411,7 +414,7 @@ Simulate a first run against a destination that already has content:
 # Throw away the state so SyncerD forgets it has ever seen these destinations
 rm /tmp/gitsync-rb/cache/git-state.json
 
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 Expect a failure per repository, not a push:
@@ -425,7 +428,7 @@ Confirm the destination is untouched. Then opt in deliberately:
 
 ```bash
 # add "adopt: true" under the gh-to-gl mirror, then
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --once --config mirror.yaml
+syncerd git-sync --once --config mirror.yaml
 ```
 
 Now it proceeds. Remove `adopt: true` again afterwards.
@@ -492,7 +495,7 @@ Drop `--once` to run the cron loop:
 
 ```bash
 # add: schedule: "*/5 * * * *"  under git:
-~/workspace/cloudwizz/SyncerD/syncerd git-sync --config mirror.yaml
+syncerd git-sync --config mirror.yaml
 ```
 
 It runs once immediately, then on the schedule, until SIGINT or SIGTERM. An
@@ -551,12 +554,14 @@ removing it. Incremental saving is a known follow-up.
 and `codecommit` pass config validation, including their type-specific field
 checks, then fail at startup with an unsupported type error. They arrive in P4.
 
-**The help text over-promises.** `syncerd --help` advertises all five providers
-because the repositioning text landed with this phase. Only GitHub and GitLab
-work today.
+**Only GitHub and GitLab are implemented.** `syncerd --help` lists all five
+provider types, but Bitbucket, Azure DevOps, and AWS CodeCommit pass config
+validation and then fail at startup with an unsupported type error. Still
+worth knowing before you build a config around one of them.
 
-**The Docker image has no git.** Test with a local binary. Image packaging,
-Helm wiring, and README documentation are P5.
+**Released binaries need git on PATH.** goreleaser ships a bare binary with
+no bundled git; install git 2.30 or newer on any host that runs a release
+binary. The Docker image installs it for you.
 
 **Only branches and tags are mirrored.** Not issues, pull requests, wikis,
 releases, or Git LFS objects. A repository using LFS mirrors its pointers, not
