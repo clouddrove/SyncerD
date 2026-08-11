@@ -145,6 +145,46 @@ func TestListReposNoDefaultBranchDoesNotPanic(t *testing.T) {
 	}
 }
 
+// TestDefaultBranchRefRoundTrip pins that stripping the refs/heads/ prefix
+// only removes a literal leading match: a branch name that itself contains
+// a slash, such as "feature/x", keeps its internal slash, and a value that
+// arrives already bare or empty passes through unchanged.
+func TestDefaultBranchRefRoundTrip(t *testing.T) {
+	cases := []struct {
+		apiValue string
+		want     string
+	}{
+		{"refs/heads/main", "main"},
+		{"refs/heads/feature/x", "feature/x"},
+		{"main", "main"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]any{
+				"count": 1,
+				"value": []map[string]any{
+					{"id": "abc", "name": "repo", "defaultBranch": tc.apiValue, "remoteUrl": "https://example.invalid/repo", "size": 10},
+				},
+			})
+		})
+
+		p, _ := newPATProvider(t, mux)
+		repos, err := p.ListRepos(context.Background())
+		if err != nil {
+			t.Fatalf("list %q: %v", tc.apiValue, err)
+		}
+		if len(repos) != 1 {
+			t.Fatalf("list %q: got %d repos", tc.apiValue, len(repos))
+		}
+		if repos[0].DefaultBranch != tc.want {
+			t.Errorf("defaultBranch %q stripped to %q, want %q", tc.apiValue, repos[0].DefaultBranch, tc.want)
+		}
+	}
+}
+
 func TestListReposFollowsContinuationToken(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories", func(w http.ResponseWriter, r *http.Request) {
@@ -447,6 +487,85 @@ func TestProjectIDLookupOnceUnderConcurrentEnsureRepo(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&projectLookups); got != 1 {
 		t.Errorf("project lookups = %d, want exactly 1 across %d concurrent EnsureRepo calls", got, workers)
+	}
+}
+
+// TestSetDefaultBranchSendsFullRefForNestedBranchName pins that a branch
+// name containing a slash, such as "feature/x", is re-prefixed with
+// refs/heads/ wholesale rather than having only its last segment turned
+// into a ref, and that the PATCH still targets the repository GUID rather
+// than the name.
+// TestProjectIDLookupDoesNotCacheTransientFailure pins that a failed
+// project lookup is not cached: projectIDCached only assigns the field
+// after a successful decode, so a failure must not poison the cache for
+// the life of the process. The first EnsureRepo hits a 500 on the project
+// lookup and fails; the second must retry the lookup rather than reuse a
+// cached error, and succeed.
+func TestProjectIDLookupDoesNotCacheTransientFailure(t *testing.T) {
+	var lookups int32
+	var failFirst atomic.Bool
+	failFirst.Store(true)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/acme-org/_apis/projects/acme-proj", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&lookups, 1)
+		if failFirst.Swap(false) {
+			http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"id": "11111111-2222-3333-4444-555555555555"})
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/newrepo", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]any{"id": "aaaa", "name": "newrepo", "remoteUrl": "https://example.invalid/newrepo"})
+	})
+
+	p, _ := newPATProvider(t, mux)
+
+	// First attempt fails at the project lookup.
+	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "newrepo"}); err == nil {
+		t.Fatal("expected the first EnsureRepo to fail on the project lookup")
+	}
+
+	// Second attempt must retry the lookup rather than reuse a poisoned cache.
+	if _, err := p.EnsureRepo(context.Background(), vcs.RepoSpec{Path: "newrepo"}); err != nil {
+		t.Fatalf("second EnsureRepo should have retried the lookup and succeeded, got %v", err)
+	}
+
+	if got := atomic.LoadInt32(&lookups); got != 2 {
+		t.Errorf("project lookups = %d, want 2: a failure must not be cached and a success must be", got)
+	}
+}
+
+func TestSetDefaultBranchSendsFullRefForNestedBranchName(t *testing.T) {
+	var body map[string]any
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/repo", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"id": "guid-1234", "name": "repo", "remoteUrl": "https://example.invalid/repo"})
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/guid-1234", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		writeJSON(w, map[string]any{"id": "guid-1234", "name": "repo"})
+	})
+
+	p, _ := newPATProvider(t, mux)
+	if err := p.SetDefaultBranch(context.Background(), "repo", "feature/x"); err != nil {
+		t.Fatalf("set default branch: %v", err)
+	}
+	if body["defaultBranch"] != "refs/heads/feature/x" {
+		t.Errorf("defaultBranch = %v, want refs/heads/feature/x", body["defaultBranch"])
 	}
 }
 
