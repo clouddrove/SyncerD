@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-11
+
 ### Added
 - New `syncerd git-sync` subcommand mirrors git repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, in any direction. Repositories are discovered from the source provider and filtered by name glob, archived, and fork status; unchanged repositories are detected via a source ref fingerprint and skipped without cloning
 - CodeCommit's git transport needs static IAM HTTPS Git credentials (`git_username` / `git_password`, or `SYNCERD_GIT_<NAME>_GIT_USERNAME` / `SYNCERD_GIT_<NAME>_GIT_PASSWORD`): SyncerD does not derive SigV4 git credentials, so IRSA and instance roles only cover the API (listing and creating repositories)

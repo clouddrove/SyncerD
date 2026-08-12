@@ -120,8 +120,18 @@ Requires Go 1.23+ to build from source.
 Add SyncerD to your workflow:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.0.11
+- uses: clouddrove/syncerd@v0.1.0
   with:
+    config: syncerd.yaml
+    once: "true"
+```
+
+To mirror git repositories instead of images, set `command`:
+
+```yaml
+- uses: clouddrove/syncerd@v0.1.0
+  with:
+    command: git-sync
     config: syncerd.yaml
     once: "true"
 ```
