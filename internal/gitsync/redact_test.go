@@ -1,6 +1,11 @@
 package gitsync
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+)
 
 func TestRedactReplacesSecrets(t *testing.T) {
 	r := NewRedactor("ghp_supersecrettoken", "glpat-anothersecret")
@@ -77,6 +82,38 @@ func TestRedactorAddNilSafe(t *testing.T) {
 	r.Add("some-long-secret")
 	if got := r.Redact("some-long-secret"); got != "some-long-secret" {
 		t.Errorf("nil redactor must pass through, got %q", got)
+	}
+}
+
+func TestRedactorConcurrentAddAndRedact(t *testing.T) {
+	r := NewRedactor("initial-secret-value")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			r.Add(fmt.Sprintf("late-secret-value-%d", n))
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = r.Redact("a line mentioning initial-secret-value")
+		}()
+	}
+	wg.Wait()
+
+	// Every secret registered concurrently must be redacted afterwards.
+	for i := 0; i < 8; i++ {
+		s := fmt.Sprintf("late-secret-value-%d", i)
+		if got := r.Redact("leaked " + s); strings.Contains(got, s) {
+			t.Errorf("secret %q not redacted after concurrent Add: %q", s, got)
+		}
+	}
+	if got := r.Redact("leaked initial-secret-value"); strings.Contains(got, "initial-secret-value") {
+		t.Errorf("original secret lost: %q", got)
 	}
 }
 

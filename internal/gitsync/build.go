@@ -10,13 +10,18 @@ import (
 	"github.com/clouddrove/syncerd/internal/notify"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/clouddrove/syncerd/internal/vcs"
+	"github.com/clouddrove/syncerd/internal/vcs/azuredevops"
+	"github.com/clouddrove/syncerd/internal/vcs/bitbucket"
+	"github.com/clouddrove/syncerd/internal/vcs/codecommit"
 	"github.com/clouddrove/syncerd/internal/vcs/github"
 	"github.com/clouddrove/syncerd/internal/vcs/gitlab"
 )
 
-// newRegistry returns a registry with every implemented provider type.
-// Types that validate but have no implementation yet are absent, so
-// BuildMirrors reports them clearly rather than failing at run time.
+// newRegistry returns a registry with every implemented provider type:
+// github, gitlab, bitbucket, azuredevops, and codecommit. The registration
+// mechanism stays in place for whatever provider type comes next: a type
+// with no entry here is reported clearly by BuildMirrors rather than
+// failing at run time.
 func newRegistry() *vcs.Registry {
 	r := vcs.NewRegistry()
 
@@ -28,6 +33,21 @@ func newRegistry() *vcs.Registry {
 	r.Register("gitlab", func(c vcs.ProviderConfig) (vcs.Provider, error) {
 		return gitlab.New(gitlab.Config{
 			Name: c.Name, Owner: c.Owner, APIURL: c.APIURL, Token: c.Token,
+		})
+	})
+	r.Register("bitbucket", func(c vcs.ProviderConfig) (vcs.Provider, error) {
+		return bitbucket.New(bitbucket.Config{
+			Name: c.Name, Owner: c.Owner, APIURL: c.APIURL, Email: c.Email, Token: c.Token,
+		})
+	})
+	r.Register("azuredevops", func(c vcs.ProviderConfig) (vcs.Provider, error) {
+		return azuredevops.New(azuredevops.Config{
+			Name: c.Name, Owner: c.Owner, Project: c.Project, APIURL: c.APIURL, Auth: c.Auth, Token: c.Token,
+		})
+	})
+	r.Register("codecommit", func(c vcs.ProviderConfig) (vcs.Provider, error) {
+		return codecommit.New(codecommit.Config{
+			Name: c.Name, Region: c.Region, GitUsername: c.GitUsername, GitPassword: c.GitPassword,
 		})
 	})
 

@@ -87,6 +87,7 @@ func TestValidateGitSyncRejectsNestedTemplateForFlatDestination(t *testing.T) {
 	g := validGit()
 	g.Providers = append(g.Providers, GitProviderConfig{
 		Name: "cc", Type: "codecommit", Region: "us-east-1",
+		GitUsername: "cc-git-user", GitPassword: "cc-git-password",
 	})
 	g.Mirrors = append(g.Mirrors, MirrorConfig{
 		Name: "gh-to-cc", Source: "gh", Destination: "cc",
@@ -240,15 +241,16 @@ func TestValidateGitSyncRequiresToken(t *testing.T) {
 	}
 }
 
-func TestValidateGitSyncAzureEntraNeedsNoToken(t *testing.T) {
+func TestValidateGitSyncAzureEntraStillNeedsToken(t *testing.T) {
 	g := validGit()
 	g.Providers = append(g.Providers, GitProviderConfig{
 		Name: "ado", Type: "azuredevops", Owner: "org", Project: "platform", Auth: "entra",
 	})
 	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-ado", Source: "gh", Destination: "ado"})
 	cfg := &Config{Git: g}
-	if err := cfg.ValidateGitSync(); err != nil {
-		t.Fatalf("entra mode must not require a token, got %v", err)
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "entra") {
+		t.Fatalf("entra mode requires an operator supplied Entra token, expected an error mentioning entra, got %v", err)
 	}
 }
 
@@ -265,15 +267,16 @@ func TestValidateGitSyncAzurePatNeedsToken(t *testing.T) {
 	}
 }
 
-func TestValidateGitSyncCodeCommitNeedsNoToken(t *testing.T) {
+func TestValidateGitSyncCodeCommitNeedsGitCredentials(t *testing.T) {
 	g := validGit()
 	g.Providers = append(g.Providers, GitProviderConfig{
 		Name: "cc", Type: "codecommit", Region: "us-east-1",
 	})
 	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
 	cfg := &Config{Git: g}
-	if err := cfg.ValidateGitSync(); err != nil {
-		t.Fatalf("codecommit uses an IAM role and must not require a token, got %v", err)
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "git_username") || !strings.Contains(err.Error(), "git_password") {
+		t.Fatalf("codecommit's IAM role covers the API only, not the git transport; expected an error naming git_username and git_password, got %v", err)
 	}
 }
 
@@ -285,8 +288,8 @@ func TestValidateGitSyncCodeCommitRejectsHalfCredentialPair(t *testing.T) {
 	g.Mirrors = append(g.Mirrors, MirrorConfig{Name: "gh-to-cc", Source: "gh", Destination: "cc"})
 	cfg := &Config{Git: g}
 	err := cfg.ValidateGitSync()
-	if err == nil || !strings.Contains(err.Error(), "set both or neither") {
-		t.Fatalf("expected a half credential pair error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "git_username") || !strings.Contains(err.Error(), "git_password") {
+		t.Fatalf("expected a half credential pair error naming both fields, got %v", err)
 	}
 }
 

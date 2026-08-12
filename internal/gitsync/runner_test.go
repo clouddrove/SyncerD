@@ -399,6 +399,20 @@ func TestRejectsURLWithEmbeddedCredentials(t *testing.T) {
 	}
 }
 
+// TestRunnerRejectsSourceURLWithUserinfo documents why providers must
+// sanitise a provider reported clone URL before the engine ever sees it.
+// Azure DevOps and Bitbucket return clone URLs with the account embedded as
+// userinfo, and this guard is what makes an unsanitised URL from either of
+// those providers fail at the fetch stage rather than reaching git with a
+// credential riding along in the URL.
+func TestRunnerRejectsSourceURLWithUserinfo(t *testing.T) {
+	r := NewRunner(nil)
+	_, err := r.LsRemote(context.Background(), "https://myorg@dev.azure.com/myorg/proj/_git/repo", vcs.GitCredential{})
+	if err == nil {
+		t.Fatal("a clone URL carrying userinfo must be refused")
+	}
+}
+
 func TestParseGitVersion(t *testing.T) {
 	cases := map[string][2]int{
 		"git version 2.30.0\n":               {2, 30},
@@ -477,6 +491,9 @@ func TestCredEnvKeepsSecretsOutOfConfigCount(t *testing.T) {
 	if strings.Contains(joined, "GIT_CONFIG_VALUE_1=ghp_supersecret") {
 		t.Error("secret must not be inlined into a config value")
 	}
+	if !strings.Contains(joined, "GIT_CONFIG_GLOBAL=/dev/null") {
+		t.Errorf("basic auth must clear inherited global git config, got:\n%s", joined)
+	}
 }
 
 func TestCredEnvScopesBearerHeaderToHost(t *testing.T) {
@@ -485,6 +502,9 @@ func TestCredEnvScopesBearerHeaderToHost(t *testing.T) {
 	if !strings.Contains(joined, "GIT_CONFIG_KEY_0=http.https://dev.azure.com/.extraHeader") {
 		t.Errorf("bearer header must be scoped to the host, got:\n%s", joined)
 	}
+	if !strings.Contains(joined, "GIT_CONFIG_GLOBAL=/dev/null") {
+		t.Errorf("bearer auth must clear inherited global git config, so a stray http.extraHeader cannot ride along, got:\n%s", joined)
+	}
 }
 
 func TestCredEnvWithoutCredentialClearsInheritedConfig(t *testing.T) {
@@ -492,6 +512,9 @@ func TestCredEnvWithoutCredentialClearsInheritedConfig(t *testing.T) {
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "GIT_CONFIG_COUNT=0") {
 		t.Errorf("an empty credential must clear inherited GIT_CONFIG, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "GIT_CONFIG_GLOBAL=/dev/null") {
+		t.Errorf("the no credential path must also clear inherited global git config, got:\n%s", joined)
 	}
 }
 

@@ -61,8 +61,8 @@ type GitProviderConfig struct {
 	Auth    string `mapstructure:"auth"`    // azuredevops: pat | entra
 
 	Region      string `mapstructure:"region"`       // codecommit
-	GitUsername string `mapstructure:"git_username"` // codecommit fallback
-	GitPassword string `mapstructure:"git_password"` // codecommit fallback
+	GitUsername string `mapstructure:"git_username"` // codecommit: IAM HTTPS Git credentials, required
+	GitPassword string `mapstructure:"git_password"` // codecommit: IAM HTTPS Git credentials, required
 }
 
 // FilterConfig selects which discovered repositories to mirror. The bool
@@ -329,19 +329,25 @@ func validateProviderFields(i int, p GitProviderConfig) error {
 		if p.Auth != "" && p.Auth != "pat" && p.Auth != "entra" {
 			return fmt.Errorf("git.providers[%d].auth %q is invalid for azuredevops: want pat or entra", i, p.Auth)
 		}
-		// An empty auth means pat. Entra mode carries no token because the
-		// credential comes from a service principal or managed identity.
-		if p.Auth != "entra" && p.Token == "" {
-			return fmt.Errorf("git.providers[%d].token is required for azuredevops in pat mode; set it in the config or as SYNCERD_GIT_%s_TOKEN, or set auth: entra", i, envKeyFragment(p.Name))
+		// A token is required in both modes. In pat mode it is an org
+		// scoped personal access token. In entra mode it is a Microsoft
+		// Entra ID access token that the operator obtains and supplies:
+		// SyncerD does not acquire one itself.
+		if p.Token == "" {
+			if p.Auth == "entra" {
+				return fmt.Errorf("git.providers[%d].token is required for azuredevops in entra mode: it is a Microsoft Entra ID access token the operator obtains and supplies, since SyncerD does not acquire one; set it in the config or as SYNCERD_GIT_%s_TOKEN", i, envKeyFragment(p.Name))
+			}
+			return fmt.Errorf("git.providers[%d].token is required for azuredevops in pat mode: it is an org scoped personal access token; set it in the config or as SYNCERD_GIT_%s_TOKEN, or set auth: entra", i, envKeyFragment(p.Name))
 		}
 	case "codecommit":
 		if p.Region == "" {
 			return fmt.Errorf("git.providers[%d].region is required for codecommit", i)
 		}
-		// Credentials come from the IAM role. The static git credential
-		// pair is an optional fallback and is all or nothing.
-		if (p.GitUsername == "") != (p.GitPassword == "") {
-			return fmt.Errorf("git.providers[%d] sets only one of git_username and git_password for codecommit; set both or neither", i)
+		// The API half can authenticate through the IAM role, but the git
+		// transport cannot: SyncerD does not derive SigV4 git credentials,
+		// so a static IAM HTTPS Git credential pair is required.
+		if p.GitUsername == "" || p.GitPassword == "" {
+			return fmt.Errorf("git.providers[%d] requires git_username and git_password for codecommit: SyncerD does not derive SigV4 git credentials, so generate IAM HTTPS Git credentials in the IAM console and set both fields", i)
 		}
 	}
 	return nil

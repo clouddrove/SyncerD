@@ -3,7 +3,10 @@
 // runnable before any network call is made.
 package vcs
 
-import "context"
+import (
+	"context"
+	"net/url"
+)
 
 // Repo is a repository as reported by a source provider.
 type Repo struct {
@@ -74,4 +77,19 @@ type Provider interface {
 	Name() string
 	Type() string
 	Remote
+}
+
+// SanitizeCloneURL removes any userinfo a provider API embedded in a clone
+// URL. Azure DevOps returns https://{org}@dev.azure.com/... and Bitbucket
+// returns https://{account}@bitbucket.org/..., and the git runner refuses a
+// URL carrying userinfo, because for an operator supplied URL that would
+// mean a credential in config. Credentials reach git through
+// GitCredential, never through the URL.
+func SanitizeCloneURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
