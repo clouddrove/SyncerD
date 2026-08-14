@@ -1,0 +1,6 @@
+# Deliberately empty SyncerD config: used by .github/workflows/action-smoke.yml
+# so config.Load succeeds (the file parses as valid, empty YAML) but both
+# ValidateImageSync and ValidateGitSync fail (no destinations, no git
+# configuration). That failure is the expected, harmless outcome the smoke
+# test checks for; an "unknown flag"/"unknown command"/"unknown shorthand"
+# failure instead would mean the Action's resolved argument list is broken.

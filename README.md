@@ -127,7 +127,25 @@ Add SyncerD to your workflow:
     once: "true"
 ```
 
-To mirror git repositories instead of images, set `command`:
+Pin to the latest [release tag](https://github.com/clouddrove/syncerd/releases); a floating `v1` tag will exist once the project reaches a 1.0 release.
+
+Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
+
+**Inputs:**
+
+| Input | Default | Purpose |
+|---|---|---|
+| `command` | `sync` | Subcommand to run: `sync` or `git-sync` |
+| `config` | `syncerd.yaml` | Path to the config file |
+| `once` | `true` | Run once and exit instead of the built-in cron |
+| `dry-run` | `false` | git-sync only. Report what would be created, pushed, and pruned without writing anything |
+| `report` | `""` | Write a machine readable JSON report of the run to this path |
+| `metrics-file` | `""` | Write Prometheus textfile collector metrics for the run to this path |
+| `log-format` | `text` | `text` or `json` |
+
+**Mirror git repositories instead of images**, set `command: git-sync`. Git provider tokens reach a Docker container action through the step's `env:` block, the same way any other environment variable does, so the tokens must be listed there; there is no separate `with:` input for them. Set each one from a secret, named `SYNCERD_GIT_<PROVIDER_NAME>_TOKEN` (see [Git mirroring](#git-mirroring) for the exact naming rule).
+
+Since the default push mode deletes destination refs that are absent at the source, **run once with `dry-run: "true"` before trusting a new mirror config**:
 
 ```yaml
 - uses: clouddrove/syncerd@v0.1.0
@@ -135,15 +153,28 @@ To mirror git repositories instead of images, set `command`:
     command: git-sync
     config: syncerd.yaml
     once: "true"
+    dry-run: "true"
+  env:
+    SYNCERD_GIT_GH_TOKEN: ${{ secrets.SYNCERD_GH_TOKEN }}
+    SYNCERD_GIT_GL_TOKEN: ${{ secrets.SYNCERD_GL_TOKEN }}
 ```
 
-Pin to the latest [release tag](https://github.com/clouddrove/syncerd/releases); a floating `v1` tag will exist once the project reaches a 1.0 release.
+Once the dry run output looks right, drop `dry-run` (or set it to `"false"`) to let it write for real:
 
-Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
+```yaml
+- uses: clouddrove/syncerd@v0.1.0
+  with:
+    command: git-sync
+    config: syncerd.yaml
+    once: "true"
+  env:
+    SYNCERD_GIT_GH_TOKEN: ${{ secrets.SYNCERD_GH_TOKEN }}
+    SYNCERD_GIT_GL_TOKEN: ${{ secrets.SYNCERD_GL_TOKEN }}
+```
 
 ### Use as an Azure DevOps Marketplace extension
 
-Install and run SyncerD from Azure Pipelines:
+Install and run SyncerD from Azure Pipelines. The `command` input is passed straight through to the `syncerd` binary, so it works for both subcommands:
 
 ```yaml
 - task: SyncerD@1
@@ -153,6 +184,20 @@ Install and run SyncerD from Azure Pipelines:
 ```
 
 Add registry authentication steps before this task. SyncerD uses the default Docker keychain, so `docker login`, Azure CLI, and other registry login helpers work as they do on the command line.
+
+To mirror git repositories instead, use `git-sync` and supply provider tokens as secret pipeline variables mapped into `env:` on the task, the same `SYNCERD_GIT_<PROVIDER_NAME>_TOKEN` naming rule as everywhere else in SyncerD:
+
+```yaml
+- task: SyncerD@1
+  inputs:
+    version: latest
+    command: git-sync --config syncerd.yaml --once=true --dry-run=true
+  env:
+    SYNCERD_GIT_GH_TOKEN: $(SYNCERD_GH_TOKEN)
+    SYNCERD_GIT_GL_TOKEN: $(SYNCERD_GL_TOKEN)
+```
+
+Run once with `--dry-run=true` before trusting a new mirror config; the default push mode deletes destination refs absent at the source. Drop it (or set it to `false`) once the output looks right.
 
 See [azure-devops-extension/examples/azure-devops](azure-devops-extension/examples/azure-devops) for a working ACR smoke-test pipeline, variable group setup, and checked-in config example. Extension source and publishing notes are in [azure-devops-extension/README.md](azure-devops-extension/README.md).
 

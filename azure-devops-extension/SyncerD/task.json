@@ -3,8 +3,8 @@
   "id": "deef5b09-541a-4a07-a550-8663ef57291a",
   "name": "SyncerD",
   "friendlyName": "SyncerD",
-  "description": "Install and run the SyncerD CLI.",
-  "helpMarkDown": "Installs syncerd from GitHub Releases, adds it to PATH, and optionally runs a syncerd command.",
+  "description": "Install and run the SyncerD CLI: sync (Docker registry mirroring) or git-sync (git repository mirroring).",
+  "helpMarkDown": "Installs syncerd from GitHub Releases, adds it to PATH, and optionally runs a syncerd command: `sync` mirrors Docker images between registries, `git-sync` mirrors git repositories between hosting providers.",
   "category": "Utility",
   "author": "CloudDrove",
   "version": {
@@ -29,7 +29,7 @@
       "label": "Command",
       "defaultValue": "sync --config syncerd.yaml --once=true",
       "required": false,
-      "helpMarkDown": "SyncerD command and arguments to run after installation. Leave blank to install only."
+      "helpMarkDown": "SyncerD command and arguments to run after installation. Leave blank to install only. Use `sync ...` to mirror Docker images, or `git-sync ...` to mirror git repositories; both accept the same `--config`, `--once`, `--report`, `--metrics-file`, and `--log-format` flags, and `git-sync` additionally accepts `--dry-run`."
     },
     {
       "name": "workingDirectory",

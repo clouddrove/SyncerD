@@ -1,0 +1,110 @@
+name: Action smoke
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The uses: ./ steps below cannot assert behaviour, because every
+      # scenario we can run without real registries or git remotes fails
+      # regardless of whether the argument list was well formed: there is
+      # no config that makes sync or git-sync exit 0 here. So the actual
+      # behaviour of action.yml's conditional --dry-run element has to be
+      # checked directly: evaluate the exact same expression form, with
+      # literal values standing in for inputs.command and inputs['dry-run'],
+      # on GitHub's own expression evaluator, and compare the result. This
+      # runs on a real runner, which is precisely what could not be
+      # verified locally when this workflow was written.
+      - name: dry run expression resolves correctly
+        env:
+          SYNC_CASE: ${{ 'sync' == 'git-sync' && format('--dry-run={0}', 'true') || '' }}
+          GIT_CASE: ${{ 'git-sync' == 'git-sync' && format('--dry-run={0}', 'true') || '' }}
+          GIT_OFF_CASE: ${{ 'git-sync' == 'git-sync' && format('--dry-run={0}', 'false') || '' }}
+        run: |
+          echo "sync    -> '$SYNC_CASE'"
+          echo "git on  -> '$GIT_CASE'"
+          echo "git off -> '$GIT_OFF_CASE'"
+
+          failed=0
+          [ -z "$SYNC_CASE" ]                    || { echo "FAIL: sync must produce an empty argument"; failed=1; }
+          [ "$GIT_CASE" = "--dry-run=true" ]     || { echo "FAIL: git-sync dry run argument wrong"; failed=1; }
+          [ "$GIT_OFF_CASE" = "--dry-run=false" ] || { echo "FAIL: git-sync dry run off argument wrong"; failed=1; }
+          exit $failed
+
+      # These two steps only prove the action definition is loadable and
+      # the image builds from this checkout's Dockerfile, not the
+      # published :v0 tag. They are not a behavioural check: the fixture
+      # config parses but validates to nothing, so both are expected to
+      # fail regardless of whether the resolved argument list was correct,
+      # which is exactly why the step above exists.
+      - name: action definition loads and image builds (sync)
+        continue-on-error: true
+        id: sync
+        uses: ./
+        with:
+          config: .github/fixtures/empty.yaml
+
+      - name: action definition loads and image builds (git-sync, dry run)
+        continue-on-error: true
+        id: gitsync
+        uses: ./
+        with:
+          command: git-sync
+          dry-run: "true"
+          config: .github/fixtures/empty.yaml
+
+      - name: uses:./ outcomes
+        run: |
+          echo "sync outcome:    ${{ steps.sync.outcome }}"
+          echo "gitsync outcome: ${{ steps.gitsync.outcome }}"
+
+      # GitHub Actions has no supported way to read a Docker container
+      # action step's stdout from a later step: there is no
+      # steps.<id>.outputs.stdout for a uses: step, only for an action that
+      # itself writes to GITHUB_OUTPUT, which syncerd does not do and
+      # should not be made to do just for this test. So the two steps
+      # below re-run the same built image directly with docker, using the
+      # exact argument list action.yml's args resolve to for these same
+      # inputs, so the actual error text can be captured and checked. This
+      # is the fallback the task brief pre-approved when stdout capture
+      # from uses: ./ proves awkward.
+      - name: build image for direct assertion
+        run: docker build -t syncerd-smoke .
+
+      - name: assert sync fails on configuration, not argument parsing
+        run: |
+          set +e
+          output=$(docker run --rm -v "$PWD/.github/fixtures:/fixtures" syncerd-smoke \
+            sync --config /fixtures/empty.yaml --once=true "" --report= --metrics-file= --log-format=text 2>&1)
+          status=$?
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "::error::expected sync to fail on an empty config"
+            exit 1
+          fi
+          if echo "$output" | grep -Eiq 'unknown flag|unknown command|unknown shorthand'; then
+            echo "::error::sync rejected the resolved argument list as malformed"
+            exit 1
+          fi
+
+      - name: assert git-sync dry run fails on configuration, not argument parsing
+        run: |
+          set +e
+          output=$(docker run --rm -v "$PWD/.github/fixtures:/fixtures" syncerd-smoke \
+            git-sync --config /fixtures/empty.yaml --once=true --dry-run=true --report= --metrics-file= --log-format=text 2>&1)
+          status=$?
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "::error::expected git-sync to fail on an empty config"
+            exit 1
+          fi
+          if echo "$output" | grep -Eiq 'unknown flag|unknown command|unknown shorthand'; then
+            echo "::error::git-sync rejected the resolved argument list as malformed"
+            exit 1
+          fi
