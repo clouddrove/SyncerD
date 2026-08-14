@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/clouddrove/syncerd/internal/vcs"
 )
@@ -41,6 +42,54 @@ type GitReport struct {
 	Mirrored  []MirrorEvent
 	Skipped   int
 	Failures  []GitFailure
+}
+
+// ToRunReport maps a GitReport onto the schema shared with image sync, so
+// a consumer of --report does not need to know which command produced the
+// file. Success is true only when nothing failed.
+func (r *GitReport) ToRunReport(runID string, dryRun bool) runreport.Report {
+	items := make([]runreport.Item, 0, len(r.Mirrored))
+	for _, ev := range r.Mirrored {
+		items = append(items, runreport.Item{
+			Group:       ev.Mirror,
+			Source:      ev.SourceRepo,
+			Destination: ev.DestRepo,
+			Created:     ev.Created,
+			Detail: map[string]int{
+				"refs_pushed":  ev.RefsPushed,
+				"refs_deleted": ev.RefsDeleted,
+			},
+		})
+	}
+
+	failures := make([]runreport.Failure, 0, len(r.Failures))
+	for _, f := range r.Failures {
+		failures = append(failures, runreport.Failure{
+			Group:       f.Mirror,
+			Source:      f.SourceRepo,
+			Destination: f.DestRepo,
+			Stage:       f.Stage,
+			Error:       f.Error,
+		})
+	}
+
+	return runreport.Report{
+		SchemaVersion: runreport.SchemaVersion,
+		RunID:         runID,
+		Command:       "git-sync",
+		StartedAt:     r.StartedAt,
+		EndedAt:       r.EndedAt,
+		DurationSecs:  r.EndedAt.Sub(r.StartedAt).Seconds(),
+		Success:       len(r.Failures) == 0,
+		DryRun:        dryRun,
+		Counts: runreport.Counts{
+			Succeeded: len(r.Mirrored),
+			Skipped:   r.Skipped,
+			Failed:    len(r.Failures),
+		},
+		Items:    items,
+		Failures: failures,
+	}
 }
 
 // Mirror is one resolved source to destination pair, ready to run.

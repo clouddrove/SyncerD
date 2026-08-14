@@ -10,6 +10,7 @@ import (
 	"github.com/clouddrove/syncerd/internal/config"
 	"github.com/clouddrove/syncerd/internal/notify"
 	"github.com/clouddrove/syncerd/internal/registry"
+	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -35,6 +36,50 @@ type Report struct {
 	EndedAt   time.Time
 	NewSyncs  []SyncEvent
 	Failures  []FailureEvent
+}
+
+// ToRunReport maps a Report onto the schema shared with git-sync, so a
+// consumer of --report does not need to know which command produced the
+// file. Image sync has no dry run mode today; callers should pass false
+// for dryRun. Success is true only when nothing failed.
+func (r *Report) ToRunReport(runID string, dryRun bool) runreport.Report {
+	items := make([]runreport.Item, 0, len(r.NewSyncs))
+	for _, ev := range r.NewSyncs {
+		items = append(items, runreport.Item{
+			Group:       ev.Destination,
+			Source:      fmt.Sprintf("%s:%s", ev.Image, ev.Tag),
+			Destination: ev.Ref,
+		})
+	}
+
+	failures := make([]runreport.Failure, 0, len(r.Failures))
+	for _, f := range r.Failures {
+		failures = append(failures, runreport.Failure{
+			Group:       f.Destination,
+			Source:      fmt.Sprintf("%s:%s", f.Image, f.Tag),
+			Destination: f.Ref,
+			Stage:       "",
+			Error:       f.Error,
+		})
+	}
+
+	return runreport.Report{
+		SchemaVersion: runreport.SchemaVersion,
+		RunID:         runID,
+		Command:       "sync",
+		StartedAt:     r.StartedAt,
+		EndedAt:       r.EndedAt,
+		DurationSecs:  r.EndedAt.Sub(r.StartedAt).Seconds(),
+		Success:       len(r.Failures) == 0,
+		DryRun:        dryRun,
+		Counts: runreport.Counts{
+			Succeeded: len(r.NewSyncs),
+			Skipped:   0,
+			Failed:    len(r.Failures),
+		},
+		Items:    items,
+		Failures: failures,
+	}
 }
 
 type Syncer struct {
