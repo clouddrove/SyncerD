@@ -42,39 +42,51 @@ func TestTextFormatMatchesHistoricalLogPrintf(t *testing.T) {
 	}
 }
 
-func TestTextFormatAttributesAppendedAndOmitted(t *testing.T) {
-	var buf bytes.Buffer
-	if err := Setup("text", &buf); err != nil {
+// TestTextFormatIgnoresAttributes proves the case that escaped the earlier
+// byte identity test: a call that passes attributes must still produce
+// exactly what log.Printf would produce for the message alone, with no
+// " key=value" pairs appended. A prior version of this handler appended
+// attributes in text mode, which duplicated values the message already
+// stated (for example "... (3 pushed, 1 deleted)" gaining a trailing
+// "refs_pushed=3 refs_deleted=1").
+func TestTextFormatIgnoresAttributes(t *testing.T) {
+	var oldBuf bytes.Buffer
+	std := log.New(&oldBuf, "", log.LstdFlags)
+	std.Printf("mirror %s: %s -> %s (%d pushed, %d deleted)", "gh-to-gl", "acme/app", "acme/app", 3, 1)
+
+	var newBuf bytes.Buffer
+	if err := Setup("text", &newBuf); err != nil {
 		t.Fatal(err)
 	}
+	Info("mirror gh-to-gl: acme/app -> acme/app (3 pushed, 1 deleted)",
+		"mirror", "gh-to-gl", "source", "acme/app", "destination", "acme/app",
+		"refs_pushed", 3, "refs_deleted", 1)
 
-	buf.Reset()
-	Info("no attrs here")
-	if strings.Contains(buf.String(), "=") {
-		t.Errorf("expected no key=value pairs when no attrs are passed, got %q", buf.String())
+	if oldBuf.String() == newBuf.String() {
+		return
 	}
 
-	buf.Reset()
-	Info("mirror acme: pushed", "mirror", "acme", "refs_pushed", 3)
-	got := buf.String()
-	if !strings.Contains(got, " mirror=acme") {
-		t.Errorf("expected mirror=acme attribute, got %q", got)
+	want := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} mirror gh-to-gl: acme/app -> acme/app \(3 pushed, 1 deleted\)\n$`)
+	if !want.MatchString(oldBuf.String()) {
+		t.Fatalf("standard logger output does not match expected shape: %q", oldBuf.String())
 	}
-	if !strings.Contains(got, " refs_pushed=3") {
-		t.Errorf("expected refs_pushed=3 attribute, got %q", got)
+	if !want.MatchString(newBuf.String()) {
+		t.Errorf("text output with attributes drifted from log.Printf with none:\n old: %q\n new: %q", oldBuf.String(), newBuf.String())
 	}
 }
 
-func TestTextFormatQuotesValueWithSpace(t *testing.T) {
+// TestTextFormatNeverAppendsKeyValuePairs is a direct check that no
+// " key=value" text ever appears in text mode output, regardless of what
+// attributes a call passes.
+func TestTextFormatNeverAppendsKeyValuePairs(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Setup("text", &buf); err != nil {
 		t.Fatal(err)
 	}
 
-	Info("state changed", "reason", "destination changed from a to b")
-	got := buf.String()
-	if !strings.Contains(got, `reason="destination changed from a to b"`) {
-		t.Errorf("expected quoted value for attribute containing a space, got %q", got)
+	Info("mirror acme: pushed", "mirror", "acme", "refs_pushed", 3, "reason", "two words")
+	if strings.Contains(buf.String(), "=") {
+		t.Errorf("expected no key=value pairs in text mode, got %q", buf.String())
 	}
 }
 

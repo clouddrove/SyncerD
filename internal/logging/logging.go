@@ -1,6 +1,15 @@
 // Package logging configures the process logger. Text is the default and
 // reproduces the historical log.Printf format exactly, because operators
-// grep it. JSON is opt in.
+// grep it.
+//
+// Text mode ignores every attribute passed to Info, Warn, or Error: a
+// message and its attributes often state the same values, and appending
+// them would change a line that operators already grep. Attributes exist
+// for JSON consumers only. Do not reintroduce an attribute append to text
+// mode; it silently breaks the byte identity guarantee this package
+// exists to provide.
+//
+// JSON is opt in.
 package logging
 
 import (
@@ -9,8 +18,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -68,15 +75,14 @@ func current() *slog.Logger {
 
 // textHandler reproduces the historical log.Printf(log.LstdFlags) format:
 // "2006/01/02 15:04:05 " followed by the message, in local time, with no
-// level and no key prefix on the message itself. Any attributes are
-// appended after the message as " key=value" pairs, which is additive and
-// only appears on lines that carry attributes, so a line with none of
-// today's calls attach is unchanged.
+// level and no key prefix on the message itself. Attributes, whether
+// passed directly to Info/Warn/Error or attached via WithAttrs, are
+// deliberately never written: this handler's only job is to keep matching
+// log.Printf forever, and a message that already states its values must
+// never have them appended a second time.
 type textHandler struct {
-	w      io.Writer
-	mu     *sync.Mutex
-	attrs  []slog.Attr
-	prefix string // group prefix applied to every key, including future WithAttrs calls
+	w  io.Writer
+	mu *sync.Mutex
 }
 
 func newTextHandler(w io.Writer) *textHandler {
@@ -86,65 +92,16 @@ func newTextHandler(w io.Writer) *textHandler {
 func (h *textHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h *textHandler) Handle(_ context.Context, r slog.Record) error {
-	var b strings.Builder
-	b.WriteString(r.Time.Local().Format("2006/01/02 15:04:05"))
-	b.WriteByte(' ')
-	b.WriteString(r.Message)
-
-	for _, a := range h.attrs {
-		writeAttr(&b, h.prefix, a)
-	}
-	r.Attrs(func(a slog.Attr) bool {
-		writeAttr(&b, h.prefix, a)
-		return true
-	})
-	b.WriteByte('\n')
+	line := r.Time.Local().Format("2006/01/02 15:04:05") + " " + r.Message + "\n"
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	_, err := io.WriteString(h.w, b.String())
+	_, err := io.WriteString(h.w, line)
 	return err
 }
 
-func (h *textHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	if len(attrs) == 0 {
-		return h
-	}
-	nh := *h
-	nh.attrs = append(append([]slog.Attr{}, h.attrs...), attrs...)
-	return &nh
-}
-
-func (h *textHandler) WithGroup(name string) slog.Handler {
-	if name == "" {
-		return h
-	}
-	nh := *h
-	nh.prefix = h.prefix + name + "."
-	return &nh
-}
-
-// writeAttr appends " key=value" to b, quoting the value only when it
-// contains a space.
-func writeAttr(b *strings.Builder, prefix string, a slog.Attr) {
-	a.Value = a.Value.Resolve()
-	if a.Equal(slog.Attr{}) {
-		return
-	}
-	key := a.Key
-	if prefix != "" {
-		key = prefix + key
-	}
-	b.WriteByte(' ')
-	b.WriteString(key)
-	b.WriteByte('=')
-	b.WriteString(formatValue(a.Value))
-}
-
-func formatValue(v slog.Value) string {
-	s := v.String()
-	if strings.Contains(s, " ") {
-		return strconv.Quote(s)
-	}
-	return s
-}
+// WithAttrs and WithGroup exist to satisfy slog.Handler. Since Handle never
+// writes attributes, there is nothing useful to record here: both return
+// the receiver unchanged.
+func (h *textHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+func (h *textHandler) WithGroup(name string) slog.Handler       { return h }

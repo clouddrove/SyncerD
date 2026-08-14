@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +11,7 @@ import (
 	"github.com/clouddrove/syncerd/internal/config"
 	"github.com/clouddrove/syncerd/internal/gitsync"
 	"github.com/clouddrove/syncerd/internal/logging"
+	"github.com/clouddrove/syncerd/internal/metrics"
 	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/sync"
 	"github.com/robfig/cron/v3"
@@ -34,15 +34,25 @@ registries (ECR, ACR, GCR, GitHub Container Registry), and mirrors git
 repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS
 CodeCommit, in any direction.`,
 		Version: fmt.Sprintf("%s (commit: %s)", version, commit),
+		// A command that parses fine and then fails at run time (a bad
+		// config, an unreachable provider) is not an argument error, so
+		// cobra's own usage dump and "Error: ..." line do not belong on
+		// that path: they are noise in text mode and non JSON lines that
+		// break a json log stream. The root error is reported once, through
+		// the logger, at the bottom of main.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	var cfgFile string
 	var logFormat string
+	var metricsFile string
 	var runOnce bool
 	var syncReportPath string
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./syncerd.yaml)")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", logging.FormatText, "log output format: text or json")
+	rootCmd.PersistentFlags().StringVar(&metricsFile, "metrics-file", "", "write Prometheus textfile collector metrics for the last run to this path")
 
 	// PersistentPreRunE configures the logger before any command body runs,
 	// so an unknown --log-format fails loudly at startup rather than
@@ -73,9 +83,10 @@ CodeCommit, in any direction.`,
 			}
 
 			if runOnce {
-				log.Println("Running sync once...")
+				logging.Info("Running sync once...")
 				report, err := syncer.SyncAll(context.Background())
 				writeSyncReport(syncReportPath, report, err)
+				writeSyncMetrics(metricsFile, report, err)
 				return err
 			}
 
@@ -84,8 +95,8 @@ CodeCommit, in any direction.`,
 				cfg.Schedule = "0 0 */21 * *" // Every 3 weeks (21 days)
 			}
 
-			log.Printf("Starting SyncerD with schedule: %s", cfg.Schedule)
-			return runWithCron(cfg, syncer, syncReportPath)
+			logging.Info(fmt.Sprintf("Starting SyncerD with schedule: %s", cfg.Schedule), "schedule", cfg.Schedule)
+			return runWithCron(cfg, syncer, syncReportPath, metricsFile)
 		},
 	}
 
@@ -122,15 +133,16 @@ skipped without cloning.`,
 
 			if gitOnce || gitDryRun {
 				if gitDryRun {
-					log.Println("Dry run: no repository will be created or pushed")
+					logging.Info("Dry run: no repository will be created or pushed")
 				}
 				report, err := syncer.SyncAll(context.Background())
 				writeGitReport(gitReportPath, report, gitDryRun, err)
+				writeGitMetrics(metricsFile, report, err)
 				return err
 			}
 
-			log.Printf("Starting SyncerD git-sync with schedule: %s", cfg.Git.Schedule)
-			return runGitCron(cfg, syncer, gitReportPath)
+			logging.Info(fmt.Sprintf("Starting SyncerD git-sync with schedule: %s", cfg.Git.Schedule), "schedule", cfg.Git.Schedule)
+			return runGitCron(cfg, syncer, gitReportPath, metricsFile)
 		},
 	}
 
@@ -140,7 +152,12 @@ skipped without cloning.`,
 	rootCmd.AddCommand(gitSyncCmd)
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
+		// This is the CLI's own error reporting for the process exit, not
+		// run logging, but it still goes through the logger so a json
+		// stream parses end to end: the last line of a failed run must be
+		// the same shape as every line before it.
+		logging.Error(err.Error())
+		os.Exit(1)
 	}
 }
 
@@ -158,7 +175,8 @@ func writeSyncReport(path string, report *sync.Report, runErr error) {
 	// Image sync has no dry run mode today.
 	rr := report.ToRunReport(runreport.NewRunID(), false)
 	if err := runreport.WriteRun(path, rr, runErr); err != nil {
-		log.Printf("failed to write run report to %s: %v", path, err)
+		logging.Error(fmt.Sprintf("failed to write run report to %s: %v", path, err),
+			"path", path, "error", err.Error())
 	}
 }
 
@@ -174,30 +192,82 @@ func writeGitReport(path string, report *gitsync.GitReport, dryRun bool, runErr 
 	}
 	rr := report.ToRunReport(runreport.NewRunID(), dryRun)
 	if err := runreport.WriteRun(path, rr, runErr); err != nil {
-		log.Printf("failed to write run report to %s: %v", path, err)
+		logging.Error(fmt.Sprintf("failed to write run report to %s: %v", path, err),
+			"path", path, "error", err.Error())
 	}
 }
 
-func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath string) error {
+// writeSyncMetrics writes a Prometheus textfile collector file describing
+// this run to path, when path is set. It shares runErr's role with
+// writeSyncReport: a run can abort before any per artifact failure lands in
+// report.Failures, so runErr is the ground truth for Success, honestly
+// reported either way. A failed run still writes a metrics file: that is
+// how syncerd_last_run_success flips to 0 and syncerd_last_run_unixtime
+// advances, which is the whole point of the metric. A write failure is
+// logged and otherwise ignored, exactly like the report writer: a metrics
+// problem must never fail the run.
+func writeSyncMetrics(path string, report *sync.Report, runErr error) {
+	if path == "" || report == nil {
+		return
+	}
+	m := metrics.RunMetrics{
+		Command:   "sync",
+		Success:   runErr == nil && len(report.Failures) == 0,
+		StartedAt: report.StartedAt,
+		EndedAt:   report.EndedAt,
+		Succeeded: len(report.NewSyncs),
+		Skipped:   report.Skipped,
+		Failed:    len(report.Failures),
+	}
+	if err := metrics.WriteTextfile(path, m); err != nil {
+		logging.Error(fmt.Sprintf("failed to write metrics to %s: %v", path, err),
+			"path", path, "error", err.Error())
+	}
+}
+
+// writeGitMetrics is writeSyncMetrics for git-sync; see there for the
+// rationale shared by both.
+func writeGitMetrics(path string, report *gitsync.GitReport, runErr error) {
+	if path == "" || report == nil {
+		return
+	}
+	m := metrics.RunMetrics{
+		Command:   "git-sync",
+		Success:   runErr == nil && len(report.Failures) == 0,
+		StartedAt: report.StartedAt,
+		EndedAt:   report.EndedAt,
+		Succeeded: len(report.Mirrored),
+		Skipped:   report.Skipped,
+		Failed:    len(report.Failures),
+	}
+	if err := metrics.WriteTextfile(path, m); err != nil {
+		logging.Error(fmt.Sprintf("failed to write metrics to %s: %v", path, err),
+			"path", path, "error", err.Error())
+	}
+}
+
+func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath, metricsPath string) error {
 	c := cron.New(cron.WithLocation(time.UTC))
 
 	// Run immediately on startup
-	log.Println("Running initial sync...")
+	logging.Info("Running initial sync...")
 	report, err := syncer.SyncAll(context.Background())
 	writeSyncReport(reportPath, report, err)
+	writeSyncMetrics(metricsPath, report, err)
 	if err != nil {
-		log.Printf("Initial sync error: %v", err)
+		logging.Error(fmt.Sprintf("Initial sync error: %v", err), "error", err.Error())
 	}
 
 	// Schedule periodic syncs. Each run gets its own report, overwriting
 	// the file from the previous run, so it always describes the most
 	// recent one.
 	_, err = c.AddFunc(cfg.Schedule, func() {
-		log.Println("Running scheduled sync...")
+		logging.Info("Running scheduled sync...")
 		report, err := syncer.SyncAll(context.Background())
 		writeSyncReport(reportPath, report, err)
+		writeSyncMetrics(metricsPath, report, err)
 		if err != nil {
-			log.Printf("Scheduled sync error: %v", err)
+			logging.Error(fmt.Sprintf("Scheduled sync error: %v", err), "error", err.Error())
 		}
 	})
 	if err != nil {
@@ -205,20 +275,20 @@ func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath string) err
 	}
 
 	c.Start()
-	log.Println("Cron scheduler started. Waiting for signals...")
+	logging.Info("Cron scheduler started. Waiting for signals...")
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down...")
+	logging.Info("Shutting down...")
 	ctx := c.Stop()
 	<-ctx.Done()
 	return nil
 }
 
-func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath string) error {
+func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath, metricsPath string) error {
 	// Skip a tick rather than start a second run on the same Engine. A
 	// first mirror of a large org can outlive its own interval, and Run
 	// keeps per run state on the receiver, so an overlapping run would
@@ -236,32 +306,34 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath string) e
 	// --once/--dry-run branch and never reaches runGitCron in that case,
 	// so every report written from the cron loop describes a real run.
 	_, err := c.AddFunc(cfg.Git.Schedule, func() {
-		log.Println("Running scheduled git mirror...")
+		logging.Info("Running scheduled git mirror...")
 		report, err := syncer.SyncAll(context.Background())
 		writeGitReport(reportPath, report, false, err)
+		writeGitMetrics(metricsPath, report, err)
 		if err != nil {
-			log.Printf("Scheduled git mirror error: %v", err)
+			logging.Error(fmt.Sprintf("Scheduled git mirror error: %v", err), "error", err.Error())
 		}
 	})
 	if err != nil {
 		return fmt.Errorf("invalid git cron schedule: %w", err)
 	}
 
-	log.Println("Running initial git mirror...")
+	logging.Info("Running initial git mirror...")
 	report, err := syncer.SyncAll(context.Background())
 	writeGitReport(reportPath, report, false, err)
+	writeGitMetrics(metricsPath, report, err)
 	if err != nil {
-		log.Printf("Initial git mirror error: %v", err)
+		logging.Error(fmt.Sprintf("Initial git mirror error: %v", err), "error", err.Error())
 	}
 
 	c.Start()
-	log.Println("Git mirror scheduler started. Waiting for signals...")
+	logging.Info("Git mirror scheduler started. Waiting for signals...")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down...")
+	logging.Info("Shutting down...")
 	ctx := c.Stop()
 	<-ctx.Done()
 	return nil
