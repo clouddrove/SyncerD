@@ -262,3 +262,37 @@ func TestRuntimeFailureSilencesUsageButFlagErrorDoesNot(t *testing.T) {
 		}
 	})
 }
+
+// TestCommandsTolerateEmptyPositionalArg guards an invariant the GitHub
+// Action's action.yml relies on but that is not written down anywhere in
+// the CLI itself: a Docker action's args list cannot branch, so the
+// element that carries --dry-run for git-sync evaluates to an empty
+// string when the command is sync, and that empty string still arrives as
+// its own argv entry. Today this is harmless because neither command sets
+// a cobra.Args validator, so cobra's default (ArbitraryArgs) accepts it
+// silently. If this test fails, someone has tightened one of the commands
+// with an Args validator, which is reasonable on its own, but action.yml's
+// conditional --dry-run element needs to change in the same commit, or
+// every existing image sync workflow breaks the next time the Action
+// image is published, and it would fail inside a user's GitHub Action run
+// rather than in any test here.
+func TestCommandsTolerateEmptyPositionalArg(t *testing.T) {
+	for _, sub := range []string{"sync", "git-sync"} {
+		t.Run(sub, func(t *testing.T) {
+			root := newRootCmd()
+			root.SetArgs([]string{sub, "--config", os.DevNull, "--once=true", "", "--report=", "--metrics-file=", "--log-format=text"})
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+
+			err := root.Execute()
+			// Both fail on configuration, which is the point: the empty
+			// argument must not produce a flag or argument parse error.
+			if err == nil {
+				t.Fatalf("%s: expected a configuration error", sub)
+			}
+			if strings.Contains(err.Error(), "unknown") || strings.Contains(err.Error(), "accepts") {
+				t.Errorf("%s: empty positional argument was rejected: %v", sub, err)
+			}
+		})
+	}
+}

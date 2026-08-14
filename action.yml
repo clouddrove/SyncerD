@@ -53,7 +53,11 @@ runs:
   # ArbitraryArgs), so it is silently ignored; confirmed by running the
   # built binary with a trailing empty-string argument and getting the
   # normal "at least one destination is required" error, not an argument
-  # parsing error.
+  # parsing error. This is a guarded invariant, not just a comment: see
+  # TestCommandsTolerateEmptyPositionalArg in main_test.go. If that test
+  # ever fails, this args list must change in the same commit, or an Args
+  # validator added to either command will break every image sync workflow
+  # the next time the Action image is published.
   #
   # Hyphenated input names (dry-run, metrics-file, log-format) must be read
   # with bracket syntax, inputs['name'], not inputs.name: the expression
