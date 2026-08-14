@@ -194,6 +194,14 @@ syncerd git-sync --once --config 03-nested.yaml
 failed to create git syncer: mirror "gl-to-gh": name_template renders a nested name but destination "gh" does not support nested paths
 ```
 
+**Observability flags** need no credentials either and can be checked here:
+`--report <path>` (a JSON run summary), `--metrics-file <path>` (Prometheus
+textfile collector metrics), and `--log-format json` (structured logging;
+text stays the default). All three are opt in, all three are shared with
+`sync`, and none change what a run does. See
+[Observability](../README.md#observability) in the README for the alert
+query and the one-file-per-command note.
+
 ---
 
 ## Phase 3 onward: credentials

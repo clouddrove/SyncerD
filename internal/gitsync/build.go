@@ -3,10 +3,10 @@ package gitsync
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/clouddrove/syncerd/internal/config"
+	"github.com/clouddrove/syncerd/internal/logging"
 	"github.com/clouddrove/syncerd/internal/notify"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -206,11 +206,12 @@ func NewSyncer(cfg *config.Config, dryRun bool) (*Syncer, error) {
 
 // SyncAll runs every mirror and sends Slack notifications, best effort.
 func (s *Syncer) SyncAll(ctx context.Context) (*GitReport, error) {
-	log.Println("Starting git mirror run...")
+	logging.Info("Starting git mirror run...")
 	rep, runErr := s.engine.Run(ctx, s.mirrors)
-	log.Printf("Git mirror run finished in %s: %d mirrored, %d skipped, %d failures",
-		rep.EndedAt.Sub(rep.StartedAt).Round(time.Second),
-		len(rep.Mirrored), rep.Skipped, len(rep.Failures))
+	duration := rep.EndedAt.Sub(rep.StartedAt).Round(time.Second)
+	logging.Info(fmt.Sprintf("Git mirror run finished in %s: %d mirrored, %d skipped, %d failures",
+		duration, len(rep.Mirrored), rep.Skipped, len(rep.Failures)),
+		"duration", duration.String(), "mirrored", len(rep.Mirrored), "skipped", rep.Skipped, "failed", len(rep.Failures))
 
 	// A dry run reports to the operator through the log, never to Slack.
 	// Its report describes what would happen, and posting that as a

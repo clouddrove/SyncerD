@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -63,5 +64,31 @@ func TestLoadMissingFileReturnsEmptyState(t *testing.T) {
 	}
 	if s == nil || s.Synced == nil {
 		t.Fatal("expected initialized empty state")
+	}
+}
+
+// TestSaveRenameFailureRemovesTmpFile checks that a rename failure, such as
+// the destination path already existing as a directory, does not leave a
+// stray .tmp file behind. Left alone, every subsequent save pointed at the
+// same misconfigured path would add another one. This mirrors the same fix
+// already applied to internal/runreport.Write.
+func TestSaveRenameFailureRemovesTmpFile(t *testing.T) {
+	dir := t.TempDir()
+	// path is a directory, so os.WriteFile(tmp, ...) succeeds but
+	// os.Rename(tmp, path) fails because you cannot rename a file onto an
+	// existing directory.
+	path := filepath.Join(dir, "state.json")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	s := New()
+	s.MarkSynced("ecr", "library/nginx", "1.25")
+	if err := s.Save(path); err == nil {
+		t.Fatal("expected an error saving to a path that is a directory")
+	}
+
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("expected no .tmp file left behind after a failed rename, stat err = %v", err)
 	}
 }
