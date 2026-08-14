@@ -75,7 +75,15 @@ SyncerD uses the Docker credential config for destination registry auth. Create 
 
 #### AWS ECR
 
-ECR tokens expire every **12 hours**. Refresh the secret before each sync window.
+Give the pod AWS credentials (IRSA, EKS Pod Identity, or a node instance role) and skip `dockerConfigSecret` entirely: SyncerD requests an ECR token itself through the standard AWS credential chain and refreshes it as it expires. The role needs `ecr:GetAuthorizationToken` plus push permissions on the destination repositories.
+
+```yaml
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/syncerd
+```
+
+Without AWS credentials, a Docker config secret still works, but ECR tokens expire every **12 hours**, so the secret has to be refreshed before each sync window.
 
 ```bash
 # Log in and create/update the secret

@@ -22,11 +22,15 @@ func (f *RegistryFactory) CreateSourceRegistry(registryType, registry, username,
 }
 
 func (f *RegistryFactory) CreateDestinationRegistry(registryType, registry string, region string, auth map[string]string) (Registry, error) {
-	// Production-ready approach:
-	// - treat ECR/ACR/GCR/GHCR as generic OCI registries
-	// - rely on docker credential config (authn.DefaultKeychain) in the runtime environment
+	// ECR/ACR/GCR/GHCR are all treated as generic OCI registries, authenticated
+	// through docker credential config in the runtime environment. Private ECR
+	// hosts additionally fall back to the AWS credential chain, so AWS
+	// credentials alone are enough without a separate `docker login` (see
+	// ECRKeychain).
 	//
-	// The registryType is kept for config compatibility but does not change behavior here.
+	// registryType and region are kept for config compatibility but do not
+	// change behavior: the ECR account and region are read from the registry
+	// host, which is the value actually used to address the registry.
 	_ = registryType
 	_ = region
 	_ = auth
