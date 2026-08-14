@@ -40,6 +40,7 @@ Docker Hub's [rate limits](https://docs.docker.com/docker-hub/download-rate-limi
 - [Examples](#examples)
 - [Configuration](#configuration)
 - [Git mirroring](#git-mirroring)
+- [Observability](#observability)
 - [Contributing & support](#contributing--support)
 
 ---
@@ -308,6 +309,32 @@ Run with `--dry-run` to print the ref changes each mirror would make, per reposi
 - **CodeCommit filters**: `skip_archived` and `skip_forks` have no effect for CodeCommit sources, since CodeCommit has neither concept.
 
 For the full local test procedure, including config validation, idempotency, pruning, the adopt guard, and Slack, see [docs/git-sync-runbook.md](docs/git-sync-runbook.md).
+
+---
+
+## Observability
+
+Three flags, all opt in and off by default, all shared by `sync` and `git-sync`:
+
+| Flag | What it does |
+|------|--------------|
+| `--report <path>` | Writes a machine readable JSON summary of the run: counts, per artifact detail, and any failures. One schema across both commands. Written on failed runs too |
+| `--metrics-file <path>` | Writes Prometheus [textfile collector](https://github.com/prometheus/node_exporter#textfile-collector) metrics for the run: `syncerd_last_run_unixtime`, `syncerd_last_success_unixtime`, `syncerd_last_run_success`, `syncerd_last_run_duration_seconds`, `syncerd_last_run_items` |
+| `--log-format json` | Structured logging. Text remains the default and reproduces the historical output byte for byte, since operators grep it; JSON carries per repository and per run values as real fields |
+
+```bash
+syncerd git-sync --once --report /var/lib/syncerd/last-run.json
+syncerd sync --once --metrics-file /var/lib/node_exporter/textfile/syncerd-sync.prom
+syncerd git-sync --log-format json --once
+```
+
+**The staleness alert this exists for:**
+
+```
+time() - syncerd_last_success_unixtime{command="git-sync"} > 86400
+```
+
+**One metrics file per command.** `--metrics-file` has no lock: two SyncerD processes writing to the same path can race and lose one writer's update, including `syncerd_last_success_unixtime`, which would leave the alert above evaluating over an empty vector and silently not fire. Point `sync` and `git-sync` at two different files, both in a directory node_exporter's textfile collector scrapes, since it merges every `.prom` file in that directory on its own; do not point both commands at one file. `--dry-run` writes no metrics at all, since it created, pushed, and deleted nothing.
 
 ---
 

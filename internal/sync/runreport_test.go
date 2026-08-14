@@ -86,3 +86,22 @@ func TestReportToRunReportCleanRunIsSuccess(t *testing.T) {
 		t.Errorf("expected no failures, got %+v", rr.Failures)
 	}
 }
+
+// TestReportToRunReportClampsNegativeDuration reproduces a backward NTP
+// step during a long run: EndedAt.Sub(StartedAt) goes negative because
+// StartedAt is set with time.Now().UTC(), and .UTC() strips the monotonic
+// clock reading Sub would otherwise use. The metrics writer already clamps
+// this to zero, so the report must too, or the two outputs describing one
+// run would disagree.
+func TestReportToRunReportClampsNegativeDuration(t *testing.T) {
+	started := time.Date(2026, 8, 14, 9, 15, 0, 0, time.UTC)
+	r := &Report{
+		StartedAt: started,
+		EndedAt:   started.Add(-5 * time.Second),
+	}
+
+	rr := r.ToRunReport("run-clamp", false)
+	if rr.DurationSecs != 0 {
+		t.Errorf("DurationSecs = %v, want 0 for an EndedAt before StartedAt", rr.DurationSecs)
+	}
+}

@@ -73,13 +73,23 @@ func (r *GitReport) ToRunReport(runID string, dryRun bool) runreport.Report {
 		})
 	}
 
+	// StartedAt is set with time.Now().UTC(), and .UTC() strips the
+	// monotonic clock reading that Sub would otherwise use, so this
+	// subtraction is pure wall clock. A backward NTP step during a long run
+	// can make it negative; clamp to zero so this agrees with the metrics
+	// writer, which already clamps the same way.
+	duration := r.EndedAt.Sub(r.StartedAt).Seconds()
+	if duration < 0 {
+		duration = 0
+	}
+
 	return runreport.Report{
 		SchemaVersion: runreport.SchemaVersion,
 		RunID:         runID,
 		Command:       "git-sync",
 		StartedAt:     r.StartedAt,
 		EndedAt:       r.EndedAt,
-		DurationSecs:  r.EndedAt.Sub(r.StartedAt).Seconds(),
+		DurationSecs:  duration,
 		Success:       len(r.Failures) == 0,
 		DryRun:        dryRun,
 		Counts: runreport.Counts{

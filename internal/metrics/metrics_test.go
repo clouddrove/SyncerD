@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -477,5 +478,73 @@ func TestDuration_PrecisionAndNoNegativeOrNaN(t *testing.T) {
 	}
 	if s.value < 0 {
 		t.Errorf("duration must never be negative, got %v", s.value)
+	}
+}
+
+// TestWriteTextfile_ConcurrentWritersLeaveAParseableFile documents current
+// behaviour honestly rather than asserting something false.
+//
+// WriteTextfile does read, modify, write with no lock, and the WriteTextfile
+// doc comment now says outright that two SyncerD processes must not share
+// one metrics file: a writer can still lose another writer's update in
+// that window (this package does not attempt a lock; that is a larger
+// change than a fix wave warrants). What this test asserts is narrower and
+// does hold: giving each writer a uniquely named temp file (os.CreateTemp
+// instead of a fixed path+".tmp") means two writers racing for the same
+// path can never both hold the same temp file open and interleave their
+// writes into it, so the file at path, read at any point, is always
+// exactly one writer's complete, valid output, never a torn mix of two.
+//
+// If this assertion stopped holding, the fix would be incomplete and this
+// test should fail loudly rather than being loosened to tolerate it.
+func TestWriteTextfile_ConcurrentWritersLeaveAParseableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "syncerd.prom")
+
+	const iterations = 500
+	commands := []string{"sync", "git-sync"}
+
+	var wg sync.WaitGroup
+	for _, command := range commands {
+		wg.Add(1)
+		go func(command string) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				started := time.Now()
+				m := RunMetrics{
+					Command:   command,
+					Success:   i%2 == 0,
+					StartedAt: started,
+					EndedAt:   started.Add(time.Duration(i) * time.Millisecond),
+					Succeeded: i,
+					Skipped:   i % 3,
+					Failed:    i % 2,
+				}
+				// Errors are deliberately ignored here: a transient error
+				// from one racing writer is not what this test is
+				// checking. What matters is the state of the file once
+				// every writer has finished.
+				_ = WriteTextfile(path, m)
+			}
+		}(command)
+	}
+	wg.Wait()
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read final file: %v", err)
+	}
+	// validateExposition fails the test on any structural violation,
+	// including a torn or interleaved line; it does not care which
+	// writer's values ended up on disk, only that what is on disk is one
+	// coherent, parseable file.
+	validateExposition(t, string(b))
+
+	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no leftover .tmp file after concurrent writers finished, found: %v", matches)
 	}
 }

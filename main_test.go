@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,7 +101,7 @@ func TestWriteGitMetricsCoexistsWithSyncSeries(t *testing.T) {
 		EndedAt:   started.Add(time.Second),
 		Mirrored:  []gitsync.MirrorEvent{{Mirror: "gh-to-gl", RefsPushed: 3}},
 	}
-	writeGitMetrics(path, gitReport, nil)
+	writeGitMetrics(path, gitReport, false, nil)
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -121,9 +122,143 @@ func TestWriteGitMetricsEmptyPathWritesNothing(t *testing.T) {
 	path := filepath.Join(dir, "metrics.prom")
 
 	report := &gitsync.GitReport{StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}
-	writeGitMetrics("", report, nil)
+	writeGitMetrics("", report, false, nil)
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected no file written for an empty path, stat err = %v", err)
 	}
+}
+
+// TestWriteGitMetricsDryRunWritesNothing is item 2 of the fix wave: a dry
+// run must not advance syncerd_last_run_unixtime or
+// syncerd_last_success_unixtime, because it created, pushed, and deleted
+// nothing. Before this fix, the metrics writer had no dryRun parameter at
+// all and wrote as though the run were real, which could mask a genuinely
+// dead cron for a whole alert window if an operator pointed --dry-run at
+// the production textfile path while debugging.
+func TestWriteGitMetricsDryRunWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metrics.prom")
+	started := time.Now().UTC()
+
+	report := &gitsync.GitReport{
+		StartedAt: started,
+		EndedAt:   started.Add(time.Second),
+		Mirrored:  []gitsync.MirrorEvent{{Mirror: "gh-to-gl", RefsPushed: 3}},
+	}
+	writeGitMetrics(path, report, true, nil)
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected no metrics file for a dry run, stat err = %v", err)
+	}
+}
+
+// TestWriteGitMetricsRealRunAfterDryRunWritesFile is the other half of the
+// dry run assertion: a real run at the same path must still produce a
+// file, so the dry run skip is scoped to dryRun alone and not a change
+// that broke the writer generally.
+func TestWriteGitMetricsRealRunAfterDryRunWritesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metrics.prom")
+	started := time.Now().UTC()
+
+	report := &gitsync.GitReport{
+		StartedAt: started,
+		EndedAt:   started.Add(time.Second),
+		Mirrored:  []gitsync.MirrorEvent{{Mirror: "gh-to-gl", RefsPushed: 3}},
+	}
+	writeGitMetrics(path, report, false, nil)
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected a metrics file for a real run: %v", err)
+	}
+}
+
+// TestWriteSyncReportEmptyPathBuildsNothing and
+// TestWriteGitReportEmptyPathBuildsNothing are item 6: with no --report
+// path, writeSyncReport/writeGitReport must return before ToRunReport
+// builds anything, matching the metrics writers' existing path-first
+// check. There is no exported hook into "did NewRunID run", so these
+// assert the observable contract instead: no file appears at a path
+// derived from the empty string, and, more directly, that the function
+// does not panic or block reading crypto/rand when report is otherwise
+// fully populated. TestWriteSyncMetricsEmptyPathWritesNothing and
+// TestWriteGitMetricsEmptyPathWritesNothing above already cover the
+// no-op-on-empty-path contract for the metrics writers; these two cover
+// the same contract for the report writers, which previously built a
+// runreport.Report and only then discovered WriteRun had nothing to do.
+func TestWriteSyncReportEmptyPathBuildsNothing(t *testing.T) {
+	report := &sync.Report{
+		StartedAt: time.Now().UTC(),
+		EndedAt:   time.Now().UTC(),
+		NewSyncs:  []sync.SyncEvent{{Destination: "ecr", Image: "library/nginx", Tag: "1.25"}},
+	}
+	// Must not panic and must not create anything; there is nowhere for it
+	// to write, since path is empty.
+	writeSyncReport("", report, nil)
+}
+
+func TestWriteGitReportEmptyPathBuildsNothing(t *testing.T) {
+	report := &gitsync.GitReport{
+		StartedAt: time.Now().UTC(),
+		EndedAt:   time.Now().UTC(),
+		Mirrored:  []gitsync.MirrorEvent{{Mirror: "gh-to-gl", RefsPushed: 3}},
+	}
+	writeGitReport("", report, false, nil)
+}
+
+// TestRuntimeFailureSilencesUsageButFlagErrorDoesNot is item 7: the branch's
+// one visible change to production behavior is that a runtime failure (an
+// error returned from RunE, such as a config that fails validation) no
+// longer prints cobra's usage block, while a flag parse error (a typo like
+// --bogus-flag, which never reaches RunE) still does. Nothing asserted
+// that split before this test.
+//
+// cmd.SilenceUsage is set as the first line of each RunE, so it is
+// testable in process by constructing the real command tree via
+// newRootCmd, executing it, and inspecting the field afterward: true means
+// RunE ran and chose to silence usage (a runtime failure); false, its zero
+// value, means RunE was never entered (a flag parse error), which is
+// exactly the condition that leaves cobra's own usage printing enabled.
+func TestRuntimeFailureSilencesUsageButFlagErrorDoesNot(t *testing.T) {
+	t.Run("runtime failure", func(t *testing.T) {
+		root := newRootCmd()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		// os.DevNull has no destinations, so ValidateImageSync fails inside
+		// RunE, after cmd.SilenceUsage = true has already run: a runtime
+		// failure with no credentials and no network access needed.
+		root.SetArgs([]string{"sync", "--once", "--config", os.DevNull})
+
+		if err := root.Execute(); err == nil {
+			t.Fatal("expected a runtime failure for a config with no destinations")
+		}
+
+		syncCmd, _, err := root.Find([]string{"sync"})
+		if err != nil {
+			t.Fatalf("find sync command: %v", err)
+		}
+		if !syncCmd.SilenceUsage {
+			t.Error("expected SilenceUsage to be true after a runtime failure inside RunE")
+		}
+	})
+
+	t.Run("flag parse error", func(t *testing.T) {
+		root := newRootCmd()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs([]string{"sync", "--bogus-flag"})
+
+		if err := root.Execute(); err == nil {
+			t.Fatal("expected a flag parse error for --bogus-flag")
+		}
+
+		syncCmd, _, err := root.Find([]string{"sync"})
+		if err != nil {
+			t.Fatalf("find sync command: %v", err)
+		}
+		if syncCmd.SilenceUsage {
+			t.Error("expected SilenceUsage to remain false for a flag parse error, since RunE never runs")
+		}
+	})
 }

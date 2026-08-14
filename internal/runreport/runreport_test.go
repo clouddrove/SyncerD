@@ -66,12 +66,20 @@ func TestWriteCreatesMissingParentDir(t *testing.T) {
 }
 
 func TestWriteLeavesNoTmpFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "report.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.json")
 	if err := Write(path, sampleReport()); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected no .tmp file left behind, stat err = %v", err)
+	// The temp name carries a random suffix (report.json.XXXXXX.tmp), not
+	// the fixed report.json.tmp, so a glob is required to catch one left
+	// behind.
+	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no .tmp file left behind, found: %v", matches)
 	}
 }
 
@@ -134,8 +142,12 @@ func TestWriteRenameFailureRemovesTmpFile(t *testing.T) {
 		t.Fatal("expected an error writing to a path that is a directory")
 	}
 
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected no .tmp file left behind after a failed rename, stat err = %v", err)
+	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("expected no .tmp file left behind after a failed rename, found: %v", matches)
 	}
 }
 

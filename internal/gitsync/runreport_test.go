@@ -91,6 +91,25 @@ func TestGitReportToRunReportCleanRunIsSuccess(t *testing.T) {
 	}
 }
 
+// TestGitReportToRunReportClampsNegativeDuration reproduces a backward NTP
+// step during a long run: EndedAt.Sub(StartedAt) goes negative because
+// StartedAt is set with time.Now().UTC(), and .UTC() strips the monotonic
+// clock reading Sub would otherwise use. The metrics writer already clamps
+// this to zero, so the report must too, or the two outputs describing one
+// run would disagree.
+func TestGitReportToRunReportClampsNegativeDuration(t *testing.T) {
+	started := time.Date(2026, 8, 14, 9, 15, 0, 0, time.UTC)
+	r := &GitReport{
+		StartedAt: started,
+		EndedAt:   started.Add(-5 * time.Second),
+	}
+
+	rr := r.ToRunReport("run-clamp", false)
+	if rr.DurationSecs != 0 {
+		t.Errorf("DurationSecs = %v, want 0 for an EndedAt before StartedAt", rr.DurationSecs)
+	}
+}
+
 // TestCleanGitReportPlusRunErrorIsNotSuccess is the reproduction for a
 // preflight or work directory lock failure: Engine.Run returns a report
 // with no failures recorded (nothing was ever attempted), yet the process

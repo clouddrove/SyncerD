@@ -2,17 +2,41 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
+// timestampRe matches the leading "2006/01/02 15:04:05 " that both
+// log.Printf(log.LstdFlags) and the text handler render.
+var timestampRe = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} `)
+
+// stripTimestamp replaces the leading "2006/01/02 15:04:05 " with a fixed
+// token so two lines logged a second apart still compare equal, while
+// every other byte, including the timezone the timestamp was rendered in,
+// is still compared exactly. A prior version of this test fell back to a
+// shape regexp on any divergence and then never compared the two sides to
+// each other again, so a handler that rendered in the wrong timezone, or
+// dropped a field, or used the wrong separator, still passed as long as it
+// matched the same overall shape.
+func stripTimestamp(t *testing.T, s string) string {
+	t.Helper()
+	if !timestampRe.MatchString(s) {
+		t.Fatalf("line does not start with the historical timestamp format: %q", s)
+	}
+	return timestampRe.ReplaceAllString(s, "<TS> ")
+}
+
 // TestTextFormatMatchesHistoricalLogPrintf proves the text handler
-// reproduces log.Printf(log.LstdFlags) byte for byte. Both sides are also
-// checked against the same regexp shape, so the test stays robust if the
-// clock's second ticks over between the two calls.
+// reproduces log.Printf(log.LstdFlags) byte for byte, after normalising
+// away the one acceptable divergence: the clock's second ticking over
+// between the two calls below. Everything else, including the message
+// text and the separator, is compared exactly.
 func TestTextFormatMatchesHistoricalLogPrintf(t *testing.T) {
 	// Capture what the standard logger produces today.
 	var oldBuf bytes.Buffer
@@ -26,19 +50,8 @@ func TestTextFormatMatchesHistoricalLogPrintf(t *testing.T) {
 	}
 	Info("mirror gh-to-gl: acme/app unchanged, skipping")
 
-	if oldBuf.String() == newBuf.String() {
-		return
-	}
-
-	// Only acceptable divergence is the timestamp's second ticking over
-	// between the two calls above. Fall back to a shape comparison rather
-	// than weakening this to a substring check.
-	want := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} mirror gh-to-gl: acme/app unchanged, skipping\n$`)
-	if !want.MatchString(oldBuf.String()) {
-		t.Fatalf("standard logger output does not match expected shape: %q", oldBuf.String())
-	}
-	if !want.MatchString(newBuf.String()) {
-		t.Errorf("text output drifted from log.Printf:\n old: %q\n new: %q", oldBuf.String(), newBuf.String())
+	if got, want := stripTimestamp(t, newBuf.String()), stripTimestamp(t, oldBuf.String()); got != want {
+		t.Errorf("text output drifted from log.Printf once timestamps are normalised:\n old: %q\n new: %q", want, got)
 	}
 }
 
@@ -62,16 +75,50 @@ func TestTextFormatIgnoresAttributes(t *testing.T) {
 		"mirror", "gh-to-gl", "source", "acme/app", "destination", "acme/app",
 		"refs_pushed", 3, "refs_deleted", 1)
 
-	if oldBuf.String() == newBuf.String() {
-		return
+	if got, want := stripTimestamp(t, newBuf.String()), stripTimestamp(t, oldBuf.String()); got != want {
+		t.Errorf("text output with attributes drifted from log.Printf with none, once timestamps are normalised:\n old: %q\n new: %q", want, got)
+	}
+}
+
+// TestTextTimestampUsesLocalTimeLikeLogPrintf pins the process to a zone
+// with a large, fixed, non-zero offset and checks the text handler renders
+// the same wall clock time the standard logger would for the same instant.
+//
+// The two identity tests above strip the timestamp before comparing, so
+// neither can catch a handler that silently switched from Local() to
+// UTC(): both sides would still be stripped to the same "<TS> " token.
+// This test exists for exactly that mutation. It compares Handle's output
+// directly against time.Time.In(loc), for one fixed instant, so it does
+// not depend on the host machine's own timezone (which may itself be UTC,
+// the exact condition that would let the mutation hide).
+//
+// Asia/Kolkata is used because its offset (+5:30) has no daylight saving
+// transitions to complicate the arithmetic; any zone with a non zero,
+// stable offset would do.
+func TestTextTimestampUsesLocalTimeLikeLogPrintf(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Skip("tzdata unavailable, skipping: " + err.Error())
 	}
 
-	want := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} mirror gh-to-gl: acme/app -> acme/app \(3 pushed, 1 deleted\)\n$`)
-	if !want.MatchString(oldBuf.String()) {
-		t.Fatalf("standard logger output does not match expected shape: %q", oldBuf.String())
+	orig := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = orig })
+
+	// A fixed instant, not time.Now(), so the expected string is computed
+	// once and cannot drift from the value handed to the handler.
+	instant := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC)
+	want := instant.In(loc).Format("2006/01/02 15:04:05") + " pinned zone check\n"
+
+	var buf bytes.Buffer
+	h := newTextHandler(&buf)
+	rec := slog.NewRecord(instant, slog.LevelInfo, "pinned zone check", 0)
+	if err := h.Handle(context.Background(), rec); err != nil {
+		t.Fatalf("Handle: %v", err)
 	}
-	if !want.MatchString(newBuf.String()) {
-		t.Errorf("text output with attributes drifted from log.Printf with none:\n old: %q\n new: %q", oldBuf.String(), newBuf.String())
+
+	if got := buf.String(); got != want {
+		t.Errorf("text handler did not render in local time for a %s instant:\n want: %q\n got:  %q", loc, want, got)
 	}
 }
 

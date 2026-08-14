@@ -81,11 +81,17 @@ func NewRunID() string {
 // crash mid-write cannot leave a truncated report. The parent directory is
 // created if missing, and the file is written with mode 0o600.
 //
+// The temp file name includes a random suffix (os.CreateTemp) rather than
+// a fixed path+".tmp", so two writers racing for the same path can never
+// both hold the same temp file open and interleave their writes into it.
+//
 // This duplicates internal/state's writeAtomic on purpose: that helper is
 // unexported and lives in a package neither sync package should depend on
 // just for a file write, and runreport must stay importable by both
 // without pulling internal/state along with it.
 func Write(path string, r Report) error {
+	// filepath.Dir never returns an empty string; "." (no directory
+	// component) and "/" always already exist.
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "/" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -93,13 +99,33 @@ func Write(path string, r Report) error {
 		}
 	}
 
-	tmp := path + ".tmp"
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create report tmp: %w", err)
+	}
+	tmp := f.Name()
+
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("write report tmp: %w", err)
+	}
+	// os.CreateTemp creates the file 0o600, which is already the mode this
+	// file has always had; Chmod is a no-op in practice but kept explicit
+	// so the file's mode does not silently depend on CreateTemp's default.
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("chmod report tmp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close report tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		// Leaving the temp file behind would accumulate one stray file per

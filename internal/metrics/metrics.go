@@ -219,18 +219,38 @@ func render(m RunMetrics, existing map[string][]seriesLine) string {
 // atomically. Any existing series for a command other than m.Command is
 // preserved untouched, and a failed run carries the previous
 // syncerd_last_success_unixtime forward instead of dropping it.
+//
+// Two SyncerD processes must not point --metrics-file at the same path.
+// The read, modify, write in this function has no lock, so two processes
+// racing for one path can lose one of their updates, including
+// syncerd_last_success_unixtime, silently: the staleness alert would then
+// evaluate over an empty vector and not fire, the exact failure the metric
+// exists to prevent. The intended deployment is one file per subcommand
+// (one for sync, one for git-sync) in a directory node_exporter's textfile
+// collector scrapes, since it merges every ".prom" file in that directory
+// on its own.
 func WriteTextfile(path string, m RunMetrics) error {
 	existing := parseExisting(path)
 	content := render(m, existing)
 	return writeAtomic(path, content)
 }
 
-// writeAtomic writes content to path via a temp file plus rename.
+// writeAtomic writes content to path via a uniquely named temp file plus
+// rename.
+//
+// The temp file name includes a random suffix (os.CreateTemp) rather than
+// a fixed path+".tmp", so two writers racing for the same path, which this
+// package does not otherwise guard against (see the WriteTextfile doc
+// comment), can never both hold the same temp file open and interleave
+// their writes into it. Each writer's temp file is always either whole or
+// absent; only which writer's rename lands last is still a race.
 //
 // internal/state has its own writeAtomic, but it JSON-encodes a value; this
 // package writes a plain text format, so it is not a fit to share and gets
 // its own copy rather than a forced abstraction over two different jobs.
 func writeAtomic(path string, content string) error {
+	// filepath.Dir never returns an empty string; "." (no directory
+	// component) and "/" always already exist.
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "/" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -238,9 +258,28 @@ func writeAtomic(path string, content string) error {
 		}
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create metrics tmp: %w", err)
+	}
+	tmp := f.Name()
+
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return fmt.Errorf("write metrics tmp: %w", err)
+	}
+	// os.CreateTemp creates the file 0o600; match the world readable mode
+	// the metrics file has always had, since node_exporter typically runs
+	// as a different user than SyncerD.
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("chmod metrics tmp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("close metrics tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)

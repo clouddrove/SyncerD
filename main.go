@@ -24,6 +24,24 @@ var (
 )
 
 func main() {
+	rootCmd := newRootCmd()
+	if err := rootCmd.Execute(); err != nil {
+		// This is the CLI's own error reporting for the process exit, not
+		// run logging, but it still goes through the logger so a json
+		// stream parses end to end: the last line of a failed run must be
+		// the same shape as every line before it.
+		logging.Error(err.Error())
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the command tree fresh: root, sync, and git-sync, with
+// every flag and RunE wired up, but does not execute it. Split out of main
+// so a test can construct the tree, run it in process against a real or
+// synthetic config, and inspect cobra state afterward, such as whether a
+// RunE runtime failure set cmd.SilenceUsage while a flag parse error left
+// it at its zero value. main itself only needs the two lines above.
+func newRootCmd() *cobra.Command {
 	var rootCmd = &cobra.Command{
 		Use:   "syncerd",
 		Short: "Your lightweight artifact sync engine",
@@ -150,7 +168,7 @@ skipped without cloning.`,
 				}
 				report, err := syncer.SyncAll(context.Background())
 				writeGitReport(gitReportPath, report, gitDryRun, err)
-				writeGitMetrics(metricsFile, report, err)
+				writeGitMetrics(metricsFile, report, gitDryRun, err)
 				return err
 			}
 
@@ -164,14 +182,7 @@ skipped without cloning.`,
 	gitSyncCmd.Flags().StringVar(&gitReportPath, "report", "", "write a machine readable JSON report of the run to this path")
 	rootCmd.AddCommand(gitSyncCmd)
 
-	if err := rootCmd.Execute(); err != nil {
-		// This is the CLI's own error reporting for the process exit, not
-		// run logging, but it still goes through the logger so a json
-		// stream parses end to end: the last line of a failed run must be
-		// the same shape as every line before it.
-		logging.Error(err.Error())
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 // writeSyncReport converts report and writes it as JSON to path, when path
@@ -181,8 +192,12 @@ skipped without cloning.`,
 // recorded. A write failure is logged and otherwise ignored: the run
 // itself already happened, and a report that could not be written must
 // not turn a successful sync into a failed process exit.
+//
+// The path check comes before ToRunReport so an unset --report costs
+// nothing: no run ID (crypto/rand), no slice or map allocation for a
+// value that would be thrown away.
 func writeSyncReport(path string, report *sync.Report, runErr error) {
-	if report == nil {
+	if path == "" || report == nil {
 		return
 	}
 	// Image sync has no dry run mode today.
@@ -199,8 +214,12 @@ func writeSyncReport(path string, report *sync.Report, runErr error) {
 // example, a preflight or work directory lock failure) before any per
 // artifact failure is recorded. A write failure is logged and otherwise
 // ignored, the same way Slack failures are already best effort.
+//
+// The path check comes before ToRunReport so an unset --report costs
+// nothing: no run ID (crypto/rand), no slice or map allocation for a
+// value that would be thrown away.
 func writeGitReport(path string, report *gitsync.GitReport, dryRun bool, runErr error) {
-	if report == nil {
+	if path == "" || report == nil {
 		return
 	}
 	rr := report.ToRunReport(runreport.NewRunID(), dryRun)
@@ -239,9 +258,19 @@ func writeSyncMetrics(path string, report *sync.Report, runErr error) {
 }
 
 // writeGitMetrics is writeSyncMetrics for git-sync; see there for the
-// rationale shared by both.
-func writeGitMetrics(path string, report *gitsync.GitReport, runErr error) {
-	if path == "" || report == nil {
+// rationale shared by both. dryRun is a hard skip: a dry run creates,
+// pushes, and deletes nothing, so it must not advance
+// syncerd_last_run_unixtime or syncerd_last_success_unixtime either. An
+// operator debugging with --dry-run against the production textfile path
+// would otherwise mask a genuinely dead cron for a whole alert window,
+// since the metrics would say the most recent run "succeeded" just now.
+// A dry_run label was considered and rejected: the staleness alert
+// (time() - syncerd_last_success_unixtime{command="git-sync"} > threshold)
+// selects on command alone, and a second series under that command would
+// either break the query or require it to grow a label matcher it should
+// never have needed. Writing nothing is simpler and correct.
+func writeGitMetrics(path string, report *gitsync.GitReport, dryRun bool, runErr error) {
+	if path == "" || report == nil || dryRun {
 		return
 	}
 	m := metrics.RunMetrics{
@@ -322,7 +351,7 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath, metricsP
 		logging.Info("Running scheduled git mirror...")
 		report, err := syncer.SyncAll(context.Background())
 		writeGitReport(reportPath, report, false, err)
-		writeGitMetrics(metricsPath, report, err)
+		writeGitMetrics(metricsPath, report, false, err)
 		if err != nil {
 			logging.Error(fmt.Sprintf("Scheduled git mirror error: %v", err), "error", err.Error())
 		}
@@ -334,7 +363,7 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath, metricsP
 	logging.Info("Running initial git mirror...")
 	report, err := syncer.SyncAll(context.Background())
 	writeGitReport(reportPath, report, false, err)
-	writeGitMetrics(metricsPath, report, err)
+	writeGitMetrics(metricsPath, report, false, err)
 	if err != nil {
 		logging.Error(fmt.Sprintf("Initial git mirror error: %v", err), "error", err.Error())
 	}
