@@ -11,26 +11,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Exercises action.yml's real args expressions, including the
-      # conditional --dry-run element and the bracket-form hyphenated
-      # inputs (inputs['dry-run'], inputs['metrics-file'],
-      # inputs['log-format']), against a live Actions expression evaluator.
-      # uses: ./ builds the image from this checkout's Dockerfile, not the
-      # published :v0 tag, so it verifies the current action.yml against
-      # the current code.
-      #
-      # Both steps are expected to fail: the fixture config parses but
-      # validates to nothing, so sync and git-sync both hit their normal
-      # "no destinations" / "no git configuration" error. continue-on-error
-      # lets the job carry on to the assertion below either way.
-      - name: image sync, default inputs
+      # The uses: ./ steps below cannot assert behaviour, because every
+      # scenario we can run without real registries or git remotes fails
+      # regardless of whether the argument list was well formed: there is
+      # no config that makes sync or git-sync exit 0 here. So the actual
+      # behaviour of action.yml's conditional --dry-run element has to be
+      # checked directly: evaluate the exact same expression form, with
+      # literal values standing in for inputs.command and inputs['dry-run'],
+      # on GitHub's own expression evaluator, and compare the result. This
+      # runs on a real runner, which is precisely what could not be
+      # verified locally when this workflow was written.
+      - name: dry run expression resolves correctly
+        env:
+          SYNC_CASE: ${{ 'sync' == 'git-sync' && format('--dry-run={0}', 'true') || '' }}
+          GIT_CASE: ${{ 'git-sync' == 'git-sync' && format('--dry-run={0}', 'true') || '' }}
+          GIT_OFF_CASE: ${{ 'git-sync' == 'git-sync' && format('--dry-run={0}', 'false') || '' }}
+        run: |
+          echo "sync    -> '$SYNC_CASE'"
+          echo "git on  -> '$GIT_CASE'"
+          echo "git off -> '$GIT_OFF_CASE'"
+
+          failed=0
+          [ -z "$SYNC_CASE" ]                    || { echo "FAIL: sync must produce an empty argument"; failed=1; }
+          [ "$GIT_CASE" = "--dry-run=true" ]     || { echo "FAIL: git-sync dry run argument wrong"; failed=1; }
+          [ "$GIT_OFF_CASE" = "--dry-run=false" ] || { echo "FAIL: git-sync dry run off argument wrong"; failed=1; }
+          exit $failed
+
+      # These two steps only prove the action definition is loadable and
+      # the image builds from this checkout's Dockerfile, not the
+      # published :v0 tag. They are not a behavioural check: the fixture
+      # config parses but validates to nothing, so both are expected to
+      # fail regardless of whether the resolved argument list was correct,
+      # which is exactly why the step above exists.
+      - name: action definition loads and image builds (sync)
         continue-on-error: true
         id: sync
         uses: ./
         with:
           config: .github/fixtures/empty.yaml
 
-      - name: git mirroring, dry run
+      - name: action definition loads and image builds (git-sync, dry run)
         continue-on-error: true
         id: gitsync
         uses: ./
@@ -49,12 +69,11 @@ jobs:
       # steps.<id>.outputs.stdout for a uses: step, only for an action that
       # itself writes to GITHUB_OUTPUT, which syncerd does not do and
       # should not be made to do just for this test. So the two steps
-      # above prove the expression evaluates and runs end to end, and the
-      # two steps below re-run the same built image directly with docker,
-      # using the exact argument list action.yml's args resolve to for
-      # these same inputs, so the actual error text can be captured and
-      # checked. This is the fallback the task brief pre-approved when
-      # stdout capture from uses: ./ proves awkward.
+      # below re-run the same built image directly with docker, using the
+      # exact argument list action.yml's args resolve to for these same
+      # inputs, so the actual error text can be captured and checked. This
+      # is the fallback the task brief pre-approved when stdout capture
+      # from uses: ./ proves awkward.
       - name: build image for direct assertion
         run: docker build -t syncerd-smoke .
 

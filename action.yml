@@ -62,6 +62,12 @@ runs:
   # Hyphenated input names (dry-run, metrics-file, log-format) must be read
   # with bracket syntax, inputs['name'], not inputs.name: the expression
   # parser reads the hyphen in dot notation as subtraction.
+  #
+  # The conditional expression below is asserted, with literal values, by
+  # the "dry run expression resolves correctly" step in
+  # .github/workflows/action-smoke.yml. If you change this expression,
+  # update that step's literals to match, or the workflow will stop
+  # guarding what it says it guards.
   args:
     - "${{ inputs.command }}"
     - "--config"
