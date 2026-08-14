@@ -1,8 +1,14 @@
 package gitsync
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/clouddrove/syncerd/internal/runreport"
 )
 
 func TestGitReportToRunReportConversion(t *testing.T) {
@@ -82,5 +88,49 @@ func TestGitReportToRunReportCleanRunIsSuccess(t *testing.T) {
 	}
 	if len(rr.Failures) != 0 {
 		t.Errorf("expected no failures, got %+v", rr.Failures)
+	}
+}
+
+// TestCleanGitReportPlusRunErrorIsNotSuccess is the reproduction for a
+// preflight or work directory lock failure: Engine.Run returns a report
+// with no failures recorded (nothing was ever attempted), yet the process
+// exits non-zero. ToRunReport alone reports Success: true for that
+// report, same as TestGitReportToRunReportCleanRunIsSuccess above; this
+// test proves that feeding the run error through runreport.WriteRun
+// corrects it to Success: false in the file that actually gets written.
+func TestCleanGitReportPlusRunErrorIsNotSuccess(t *testing.T) {
+	started := time.Date(2026, 8, 14, 9, 15, 0, 0, time.UTC)
+	r := &GitReport{
+		StartedAt: started,
+		EndedAt:   started.Add(1 * time.Second),
+		// No Mirrored, no Failures: exactly what Engine.Run returns when
+		// Preflight or the work directory lock fails before any mirror
+		// is attempted.
+	}
+
+	rr := r.ToRunReport("run-3", false)
+	if !rr.Success {
+		t.Fatal("sanity check: ToRunReport alone should still say Success: true for an empty report")
+	}
+
+	path := filepath.Join(t.TempDir(), "report.json")
+	runErr := errors.New("acquire lock: permission denied")
+	if err := runreport.WriteRun(path, rr, runErr); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var got runreport.Report
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Success {
+		t.Error("Success should be false: the run aborted before any mirror was attempted")
+	}
+	if len(got.Failures) != 0 {
+		t.Errorf("expected Failures to remain empty, got %+v", got.Failures)
 	}
 }

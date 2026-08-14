@@ -14,6 +14,7 @@ func TestReportToRunReportConversion(t *testing.T) {
 			{Destination: "ecr", Image: "library/nginx", Tag: "1.25", Ref: "ecr.example.com/library/nginx:1.25"},
 			{Destination: "acr", Image: "library/redis", Tag: "7", Ref: "acr.example.com/library/redis:7"},
 		},
+		Skipped: 4,
 		Failures: []FailureEvent{
 			{Destination: "gcr", Image: "library/redis", Tag: "7", Ref: "gcr.example.com/library/redis:7", Error: "denied"},
 		},
@@ -42,8 +43,8 @@ func TestReportToRunReportConversion(t *testing.T) {
 	if rr.Counts.Failed != 1 {
 		t.Errorf("Counts.Failed = %d, want 1", rr.Counts.Failed)
 	}
-	if rr.Counts.Skipped != 0 {
-		t.Errorf("Counts.Skipped = %d, want 0", rr.Counts.Skipped)
+	if rr.Counts.Skipped != 4 {
+		t.Errorf("Counts.Skipped = %d, want 4", rr.Counts.Skipped)
 	}
 	if len(rr.Items) != 2 {
 		t.Fatalf("len(Items) = %d, want 2", len(rr.Items))

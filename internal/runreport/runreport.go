@@ -51,8 +51,8 @@ type Item struct {
 	Group       string         `json:"group"` // mirror name, or destination name for image sync
 	Source      string         `json:"source"`
 	Destination string         `json:"destination"`
-	Created     bool           `json:"created,omitempty"`
-	Detail      map[string]int `json:"detail,omitempty"` // e.g. refs_pushed, refs_deleted
+	Created     bool           `json:"created,omitempty"` // git-sync only: true when the destination repository did not exist and was created
+	Detail      map[string]int `json:"detail,omitempty"`  // git-sync only: refs_pushed, refs_deleted; always empty for image sync
 }
 
 // Failure is one artifact that failed, and where.
@@ -102,7 +102,31 @@ func Write(path string, r Report) error {
 		return fmt.Errorf("write report tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// Leaving the temp file behind would accumulate one stray file per
+		// run for as long as the path stays misconfigured.
+		_ = os.Remove(tmp)
 		return fmt.Errorf("replace report file: %w", err)
 	}
 	return nil
+}
+
+// WriteRun finalizes rr and writes it to path, the shared logic behind
+// both commands' --report flag.
+//
+// A run can abort before any artifact is attempted, for example a git
+// preflight failure or a work directory lock failure, leaving Failures
+// empty even though the run did not succeed. runErr is the ground truth
+// for the run's outcome, so it overrides whatever the per artifact
+// failures implied about Success.
+//
+// WriteRun is a no-op returning nil when path is empty, since --report is
+// optional. Any error it returns is a write failure; the caller decides
+// how to surface that, but per the flag's contract it must never be
+// treated as a run failure.
+func WriteRun(path string, rr Report, runErr error) error {
+	if path == "" {
+		return nil
+	}
+	rr.Success = rr.Success && runErr == nil
+	return Write(path, rr)
 }

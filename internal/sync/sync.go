@@ -35,6 +35,7 @@ type Report struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 	NewSyncs  []SyncEvent
+	Skipped   int
 	Failures  []FailureEvent
 }
 
@@ -74,7 +75,7 @@ func (r *Report) ToRunReport(runID string, dryRun bool) runreport.Report {
 		DryRun:        dryRun,
 		Counts: runreport.Counts{
 			Succeeded: len(r.NewSyncs),
-			Skipped:   0,
+			Skipped:   r.Skipped,
 			Failed:    len(r.Failures),
 		},
 		Items:    items,
@@ -389,6 +390,9 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 
 		if s.state.IsSynced(destCfg.Name, imageName, tag) {
 			log.Printf("Already synced (state): %s -> %s", sourceRef, destRef)
+			if s.currentReport != nil {
+				s.currentReport.Skipped++
+			}
 			continue
 		}
 
@@ -401,6 +405,9 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 		if exists {
 			log.Printf("Image %s:%s already exists in %s, skipping", destImageName, tag, destCfg.Name)
 			s.state.MarkSynced(destCfg.Name, imageName, tag)
+			if s.currentReport != nil {
+				s.currentReport.Skipped++
+			}
 			continue
 		}
 

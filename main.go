@@ -62,7 +62,7 @@ CodeCommit, in any direction.`,
 			if runOnce {
 				log.Println("Running sync once...")
 				report, err := syncer.SyncAll(context.Background())
-				writeSyncReport(syncReportPath, report)
+				writeSyncReport(syncReportPath, report, err)
 				return err
 			}
 
@@ -112,7 +112,7 @@ skipped without cloning.`,
 					log.Println("Dry run: no repository will be created or pushed")
 				}
 				report, err := syncer.SyncAll(context.Background())
-				writeGitReport(gitReportPath, report, gitDryRun)
+				writeGitReport(gitReportPath, report, gitDryRun, err)
 				return err
 			}
 
@@ -131,30 +131,36 @@ skipped without cloning.`,
 	}
 }
 
-// writeSyncReport writes report as JSON to path, when path is set. A write
-// failure is logged and otherwise ignored: the run itself already
-// happened, and a report that could not be written must not turn a
-// successful sync into a failed process exit.
-func writeSyncReport(path string, report *sync.Report) {
-	if path == "" || report == nil {
+// writeSyncReport converts report and writes it as JSON to path, when path
+// is set. runErr is the error SyncAll returned for this run: it overrides
+// the converted report's success field, since a run can abort (for
+// example, a state save failure) before any per artifact failure is
+// recorded. A write failure is logged and otherwise ignored: the run
+// itself already happened, and a report that could not be written must
+// not turn a successful sync into a failed process exit.
+func writeSyncReport(path string, report *sync.Report, runErr error) {
+	if report == nil {
 		return
 	}
 	// Image sync has no dry run mode today.
 	rr := report.ToRunReport(runreport.NewRunID(), false)
-	if err := runreport.Write(path, rr); err != nil {
+	if err := runreport.WriteRun(path, rr, runErr); err != nil {
 		log.Printf("failed to write run report to %s: %v", path, err)
 	}
 }
 
-// writeGitReport writes report as JSON to path, when path is set. A write
-// failure is logged and otherwise ignored, the same way Slack failures are
-// already best effort.
-func writeGitReport(path string, report *gitsync.GitReport, dryRun bool) {
-	if path == "" || report == nil {
+// writeGitReport converts report and writes it as JSON to path, when path
+// is set. runErr is the error SyncAll returned for this run: it overrides
+// the converted report's success field, since a run can abort (for
+// example, a preflight or work directory lock failure) before any per
+// artifact failure is recorded. A write failure is logged and otherwise
+// ignored, the same way Slack failures are already best effort.
+func writeGitReport(path string, report *gitsync.GitReport, dryRun bool, runErr error) {
+	if report == nil {
 		return
 	}
 	rr := report.ToRunReport(runreport.NewRunID(), dryRun)
-	if err := runreport.Write(path, rr); err != nil {
+	if err := runreport.WriteRun(path, rr, runErr); err != nil {
 		log.Printf("failed to write run report to %s: %v", path, err)
 	}
 }
@@ -165,7 +171,7 @@ func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath string) err
 	// Run immediately on startup
 	log.Println("Running initial sync...")
 	report, err := syncer.SyncAll(context.Background())
-	writeSyncReport(reportPath, report)
+	writeSyncReport(reportPath, report, err)
 	if err != nil {
 		log.Printf("Initial sync error: %v", err)
 	}
@@ -176,7 +182,7 @@ func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath string) err
 	_, err = c.AddFunc(cfg.Schedule, func() {
 		log.Println("Running scheduled sync...")
 		report, err := syncer.SyncAll(context.Background())
-		writeSyncReport(reportPath, report)
+		writeSyncReport(reportPath, report, err)
 		if err != nil {
 			log.Printf("Scheduled sync error: %v", err)
 		}
@@ -219,7 +225,7 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath string) e
 	_, err := c.AddFunc(cfg.Git.Schedule, func() {
 		log.Println("Running scheduled git mirror...")
 		report, err := syncer.SyncAll(context.Background())
-		writeGitReport(reportPath, report, false)
+		writeGitReport(reportPath, report, false, err)
 		if err != nil {
 			log.Printf("Scheduled git mirror error: %v", err)
 		}
@@ -230,7 +236,7 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath string) e
 
 	log.Println("Running initial git mirror...")
 	report, err := syncer.SyncAll(context.Background())
-	writeGitReport(reportPath, report, false)
+	writeGitReport(reportPath, report, false, err)
 	if err != nil {
 		log.Printf("Initial git mirror error: %v", err)
 	}
