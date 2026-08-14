@@ -145,7 +145,11 @@
       "additionalProperties": false,
       "properties": {
         "create": { "type": "boolean" },
-        "name": { "type": "string" }
+        "name": { "type": "string" },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
       },
       "required": ["create"]
     }

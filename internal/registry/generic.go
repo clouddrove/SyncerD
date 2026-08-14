@@ -13,17 +13,26 @@ import (
 )
 
 // GenericRegistry is a generic OCI registry implementation.
-// It uses authn.DefaultKeychain (docker credential helpers / docker config)
-// for authentication.
+// It uses docker credential helpers / docker config for authentication, plus
+// native AWS authentication for private ECR hosts (see ECRKeychain).
 type GenericRegistry struct {
 	registry string
 	keychain authn.Keychain
 }
 
 func NewGenericRegistry(registry string) *GenericRegistry {
+	return NewGenericRegistryWithKeychain(registry, DefaultDestinationKeychain())
+}
+
+// NewGenericRegistryWithKeychain builds a registry that authenticates with the
+// given keychain. A nil keychain means the destination default.
+func NewGenericRegistryWithKeychain(registry string, keychain authn.Keychain) *GenericRegistry {
+	if keychain == nil {
+		keychain = DefaultDestinationKeychain()
+	}
 	return &GenericRegistry{
 		registry: registry,
-		keychain: authn.DefaultKeychain,
+		keychain: keychain,
 	}
 }
 

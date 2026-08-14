@@ -147,7 +147,7 @@ func NewSyncer(cfg *config.Config) (*Syncer, error) {
 	srcAuth := getSourceAuth(cfg)
 	keychain := registry.SourceAwareKeychain{
 		SourceAuth: srcAuth,
-		Fallback:   authn.DefaultKeychain,
+		Fallback:   registry.DefaultDestinationKeychain(),
 	}
 
 	st, err := state.Load(cfg.StatePath)
@@ -464,7 +464,8 @@ func (s *Syncer) copyImage(ctx context.Context, sourceRef string, destReg regist
 	destRef := fmt.Sprintf("%s/%s:%s", destReg.GetRegistryURL(), destImage, destTag)
 
 	// Copy image using crane, sourcing auth from config (Docker Hub) and destination
-	// auth from docker credential config (authn.DefaultKeychain).
+	// auth from docker credential config, or from the AWS credential chain for
+	// private ECR hosts.
 	if err := retry(ctx, 3, 3*time.Second, func() error {
 		opCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()

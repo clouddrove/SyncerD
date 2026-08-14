@@ -94,7 +94,7 @@ That's it. Use the same config in [GitHub Actions](#use-as-a-github-action-marke
 | **GitHub Action** | [Marketplace action](https://github.com/marketplace) — drop into workflows |
 | **Helm chart** | Run as a CronJob on Kubernetes; stateless by default (no PVC) |
 | **Slack** | Optional branded Block Kit alerts (color-coded, per-destination grouping) on new syncs and failures (compact/detailed) |
-| **Secure** | Docker Hub via env/secret; destinations via Docker credential config |
+| **Secure** | Docker Hub via env/secret; destinations via Docker credential config, ECR via the AWS credential chain |
 | **Git mirroring** | Mirror repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit (`git-sync`); filtered discovery, safe push modes, dry run |
 
 ---
@@ -129,7 +129,40 @@ Add SyncerD to your workflow:
 
 Pin to the latest [release tag](https://github.com/clouddrove/syncerd/releases); a floating `v1` tag will exist once the project reaches a 1.0 release.
 
-Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr-login`) *before* SyncerD so destination registries are authenticated.
+**Destination registry auth in the Action:**
+
+For **AWS ECR**, add `aws-actions/configure-aws-credentials` before SyncerD and nothing else: SyncerD requests an ECR token itself from the AWS credential chain, so `aws-actions/amazon-ecr-login` is not needed.
+
+```yaml
+- uses: aws-actions/configure-aws-credentials@v6
+  with:
+    role-to-assume: arn:aws:iam::123456789012:role/syncerd
+    aws-region: eu-west-1
+
+- uses: clouddrove/syncerd@v0.1.1
+  with:
+    config: syncerd.yaml
+```
+
+For **GHCR, ACR, GCR** (and for ECR if you prefer an explicit `docker login`), the login step has to write its credentials somewhere the Action can read. SyncerD runs as a Docker container action, and a container action does not get the runner's `~/.docker/config.json`, so a plain `docker/login-action` step is invisible to it and every request fails with `401 Unauthorized`. Point `DOCKER_CONFIG` at the workspace, which *is* mounted into the container at `/github/workspace`:
+
+```yaml
+env:
+  DOCKER_CONFIG: ${{ github.workspace }}/.docker   # job level: where login steps write
+
+steps:
+  - uses: docker/login-action@v3
+    with:
+      registry: ghcr.io
+      username: ${{ github.actor }}
+      password: ${{ secrets.GITHUB_TOKEN }}
+
+  - uses: clouddrove/syncerd@v0.1.1
+    env:
+      DOCKER_CONFIG: /github/workspace/.docker     # same directory, path inside the container
+    with:
+      config: syncerd.yaml
+```
 
 **Inputs:**
 
@@ -213,10 +246,11 @@ Set `config.destinations` and `config.images` in `values.yaml` or via `--set`.
 
 **Credentials:**
 - Docker Hub (source): use `existingSecret` (recommended) or `secret.*` in values.
-- Destination registries (ECR/ACR/GCR/GHCR): create a Docker config secret and set `dockerConfigSecret`. SyncerD automatically sets `DOCKER_CONFIG=/var/lib/syncerd/.docker` so the credentials are found even when the pod runs as a non-root user.
+- Destination registries (ACR/GCR/GHCR): create a Docker config secret and set `dockerConfigSecret`. SyncerD automatically sets `DOCKER_CONFIG=/var/lib/syncerd/.docker` so the credentials are found even when the pod runs as a non-root user.
+- Destination ECR registries: give the pod AWS credentials instead (IRSA, EKS Pod Identity, or an instance role with `ecr:GetAuthorizationToken` plus push permissions on the target repositories). SyncerD fetches and refreshes the ECR token itself, so no `dockerConfigSecret` and no refresh CronJob is needed.
 - To pull the SyncerD image itself from a private registry, use `imagePullSecrets` — this is separate from `dockerConfigSecret`.
 
-**ECR note:** ECR tokens expire every 12 hours. Refresh `dockerConfigSecret` before expiry:
+**ECR without IAM:** if the pod cannot be given AWS credentials, a Docker config secret still works, but ECR tokens expire every 12 hours and the secret has to be refreshed before expiry:
 
 ```bash
 aws ecr get-login-password --region <region> | \
@@ -255,7 +289,7 @@ Full example: [syncerd.yaml.example](syncerd.yaml.example).
 | Section | Purpose |
 |---------|---------|
 | `source` | Docker Hub (username/password or token via env or config) |
-| `destinations` | List of registries (ECR, ACR, GCR, GHCR); auth via Docker credential config |
+| `destinations` | List of registries (ECR, ACR, GCR, GHCR); auth via Docker credential config, or the AWS credential chain for ECR |
 | `images` | Images to sync; optional `tags`, `watch_tags` for new tag detection |
 | `schedule` | Cron expression when running without `--once` |
 | `state_path` | Optional state file for "already synced" tracking; leave empty for fully stateless |
@@ -273,8 +307,8 @@ Override with `SYNCERD_` prefix:
 ### Authentication
 
 - **Docker Hub (source):** Username/password or Personal Access Token (env or config). Credentials are validated at startup.
-- **Destinations (ECR/ACR/GCR/GHCR):** SyncerD uses the default Docker keychain — `docker login`, credential helpers, or GitHub Actions login steps.
-- **ECR:** Tokens expire every 12 hours. Ensure credentials are refreshed before each scheduled sync.
+- **Destinations (ACR/GCR/GHCR):** SyncerD uses the default Docker keychain — `docker login`, credential helpers, or GitHub Actions login steps.
+- **ECR:** AWS credentials are enough. When a destination host is a private ECR registry (`<account>.dkr.ecr.<region>.amazonaws.com`), SyncerD calls `ecr:GetAuthorizationToken` through the standard AWS credential chain (environment variables, shared config, IRSA, instance role) and refreshes the token as it expires, so long-running syncs do not need a credential refresh loop. The account and region come from the registry host. A `docker login` for the same registry still takes precedence when one exists. Public ECR (`public.ecr.aws`) is not covered by this and needs a `docker login`.
 
 ---
 

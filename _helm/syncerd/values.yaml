@@ -207,3 +207,7 @@ securityContext:
 serviceAccount:
   create: true
   name: ""
+  # Annotations on the created service account. Use this for IRSA when syncing
+  # to ECR, e.g.
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/syncerd
+  annotations: {}
