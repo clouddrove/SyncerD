@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--metrics-file <path>` writes Prometheus textfile collector metrics (`syncerd_last_run_unixtime`, `syncerd_last_success_unixtime`, `syncerd_last_run_success`, `syncerd_last_run_duration_seconds`, `syncerd_last_run_items`) after each run, for both `sync` and `git-sync`, including failed runs; `sync` and `git-sync` series coexist in the same file
 
 ### Changed
-- A run time failure (a bad config, an unreachable provider) now prints only the error, without cobra's flag usage dump that used to follow it; the error is routed through the same logger as every other line, so a `--log-format json` run stays parseable end to end
+- A run time failure (a bad config, an unreachable provider) now prints only the error, without cobra's flag usage dump that used to follow it; the error is routed through the same logger as every other line, so a `--log-format json` run stays parseable end to end. A flag parse error (a typo like `--bogus-flag`) is unaffected and still prints the usage block, since that failure never reaches the point where usage gets silenced
 
 ### Fixed
 - `internal/state`'s atomic write no longer leaves a stray `.tmp` file behind when the rename fails, the same fix already applied to the run report writer

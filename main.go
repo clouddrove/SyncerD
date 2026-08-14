@@ -34,13 +34,14 @@ registries (ECR, ACR, GCR, GitHub Container Registry), and mirrors git
 repositories across GitHub, GitLab, Bitbucket, Azure DevOps, and AWS
 CodeCommit, in any direction.`,
 		Version: fmt.Sprintf("%s (commit: %s)", version, commit),
-		// A command that parses fine and then fails at run time (a bad
-		// config, an unreachable provider) is not an argument error, so
-		// cobra's own usage dump and "Error: ..." line do not belong on
-		// that path: they are noise in text mode and non JSON lines that
-		// break a json log stream. The root error is reported once, through
-		// the logger, at the bottom of main.
-		SilenceUsage:  true,
+		// SilenceErrors: cobra's own "Error: ..." line is never wanted; the
+		// root error is reported once, through the logger, at the bottom of
+		// main, so a json log stream parses end to end. SilenceUsage is
+		// deliberately NOT set here: a flag parse error (a typo like
+		// --bogus-flag) never reaches a command's RunE, so the usage block
+		// below still fires for those. Each RunE sets cmd.SilenceUsage
+		// itself, once parsing has already succeeded, so only a genuine
+		// runtime failure skips it.
 		SilenceErrors: true,
 	}
 
@@ -68,6 +69,12 @@ CodeCommit, in any direction.`,
 		Use:   "sync",
 		Short: "Sync images according to configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flag parsing has already succeeded by the time RunE is
+			// entered, so any error from here is a runtime failure and the
+			// flag list is noise. Parse errors still print usage, because
+			// this line is never reached for them.
+			cmd.SilenceUsage = true
+
 			cfg, err := config.Load(cfgFile)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
@@ -118,6 +125,12 @@ Repositories are discovered from the source provider, filtered, and mirrored
 as a full replica of all branches and tags. Unchanged repositories are
 skipped without cloning.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flag parsing has already succeeded by the time RunE is
+			// entered, so any error from here is a runtime failure and the
+			// flag list is noise. Parse errors still print usage, because
+			// this line is never reached for them.
+			cmd.SilenceUsage = true
+
 			cfg, err := config.Load(cfgFile)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
