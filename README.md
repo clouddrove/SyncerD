@@ -121,7 +121,7 @@ Requires Go 1.23+ to build from source.
 Add SyncerD to your workflow:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.0
+- uses: clouddrove/syncerd@v0.1.1
   with:
     config: syncerd.yaml
     once: "true"
@@ -148,7 +148,7 @@ Add Docker credential steps (e.g. `docker/login-action`, `aws-actions/amazon-ecr
 Since the default push mode deletes destination refs that are absent at the source, **run once with `dry-run: "true"` before trusting a new mirror config**:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.0
+- uses: clouddrove/syncerd@v0.1.1
   with:
     command: git-sync
     config: syncerd.yaml
@@ -162,7 +162,7 @@ Since the default push mode deletes destination refs that are absent at the sour
 Once the dry run output looks right, drop `dry-run` (or set it to `"false"`) to let it write for real:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.0
+- uses: clouddrove/syncerd@v0.1.1
   with:
     command: git-sync
     config: syncerd.yaml
