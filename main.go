@@ -11,6 +11,7 @@ import (
 
 	"github.com/clouddrove/syncerd/internal/config"
 	"github.com/clouddrove/syncerd/internal/gitsync"
+	"github.com/clouddrove/syncerd/internal/logging"
 	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/sync"
 	"github.com/robfig/cron/v3"
@@ -36,10 +37,22 @@ CodeCommit, in any direction.`,
 	}
 
 	var cfgFile string
+	var logFormat string
 	var runOnce bool
 	var syncReportPath string
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./syncerd.yaml)")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", logging.FormatText, "log output format: text or json")
+
+	// PersistentPreRunE configures the logger before any command body runs,
+	// so an unknown --log-format fails loudly at startup rather than
+	// silently logging in the wrong shape partway through a run.
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if err := logging.Setup(logFormat, os.Stderr); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	syncCmd := &cobra.Command{
 		Use:   "sync",

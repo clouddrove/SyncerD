@@ -105,6 +105,9 @@ func writeAtomic(path string, v any) error {
 		return fmt.Errorf("write state tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// Leaving the temp file behind would accumulate one stray file per
+		// save for as long as the path stays misconfigured.
+		_ = os.Remove(tmp)
 		return fmt.Errorf("replace state file: %w", err)
 	}
 	return nil

@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/clouddrove/syncerd/internal/logging"
 	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -201,7 +201,8 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		}
 
 		selected := vcs.Apply(m.Filter, repos)
-		log.Printf("mirror %s: %d repositories discovered, %d selected", m.Name, len(repos), len(selected))
+		logging.Info(fmt.Sprintf("mirror %s: %d repositories discovered, %d selected", m.Name, len(repos), len(selected)),
+			"mirror", m.Name, "discovered", len(repos), "selected", len(selected))
 
 		if err := e.checkDestinationCollisions(m, selected); err != nil {
 			e.addFailure(GitFailure{Mirror: m.Name, Stage: "discover", Error: e.redact(err.Error())})
@@ -335,7 +336,7 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		return
 	}
 	if len(refs) == 0 {
-		log.Printf("mirror %s: %s is empty, skipping", m.Name, repo.Path)
+		logging.Info(fmt.Sprintf("mirror %s: %s is empty, skipping", m.Name, repo.Path))
 		e.addSkip()
 		return
 	}
@@ -351,12 +352,12 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	// inspect what is actually there.
 	hasState := hadState && prev.DestPath == destName
 	if hadState && !hasState {
-		log.Printf("mirror %s: %s destination changed from %q to %q, treating as a first run",
-			m.Name, repo.Path, prev.DestPath, destName)
+		logging.Info(fmt.Sprintf("mirror %s: %s destination changed from %q to %q, treating as a first run",
+			m.Name, repo.Path, prev.DestPath, destName))
 	}
 
 	if hasState && prev.Fingerprint == fp {
-		log.Printf("mirror %s: %s unchanged, skipping", m.Name, repo.Path)
+		logging.Info(fmt.Sprintf("mirror %s: %s unchanged, skipping", m.Name, repo.Path))
 		e.addSkip()
 		return
 	}
@@ -404,7 +405,7 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		if e.opts.DryRun {
 			// A dry run reports the creation without performing it.
 			created = true
-			log.Printf("mirror %s: would create destination %s", m.Name, destName)
+			logging.Info(fmt.Sprintf("mirror %s: would create destination %s", m.Name, destName))
 		} else {
 			if _, err := m.DestEnsurer.EnsureRepo(ctx, vcs.RepoSpec{
 				Path:          destName,
@@ -459,7 +460,7 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 			RefsPushed: len(refs),
 			Created:    created,
 		})
-		log.Printf("mirror %s: %s -> %s (dry run, destination does not exist yet; %d refs would be pushed)", m.Name, repo.Path, destName, len(refs))
+		logging.Info(fmt.Sprintf("mirror %s: %s -> %s (dry run, destination does not exist yet; %d refs would be pushed)", m.Name, repo.Path, destName, len(refs)))
 		return
 	}
 
@@ -470,9 +471,9 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	}
 
 	if e.opts.DryRun && len(res.Lines) > 0 {
-		log.Printf("mirror %s: %s -> %s would apply %d ref change(s):", m.Name, repo.Path, destName, len(res.Lines))
+		logging.Info(fmt.Sprintf("mirror %s: %s -> %s would apply %d ref change(s):", m.Name, repo.Path, destName, len(res.Lines)))
 		for _, line := range res.Lines {
-			log.Printf("  %s", line)
+			logging.Info(fmt.Sprintf("  %s", line))
 		}
 	}
 
@@ -481,7 +482,9 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 
 		if setter, ok := m.Dest.(vcs.DefaultBranchSetter); ok && repo.DefaultBranch != "" && created {
 			if err := setter.SetDefaultBranch(ctx, destName, repo.DefaultBranch); err != nil {
-				log.Printf("mirror %s: could not set default branch on %s: %s", m.Name, destName, e.redact(err.Error()))
+				redacted := e.redact(err.Error())
+				logging.Warn(fmt.Sprintf("mirror %s: could not set default branch on %s: %s", m.Name, destName, redacted),
+					"mirror", m.Name, "destination", destName, "error", redacted)
 			}
 		}
 	}
@@ -494,7 +497,9 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		RefsDeleted: res.Deleted,
 		Created:     created,
 	})
-	log.Printf("mirror %s: %s -> %s (%d pushed, %d deleted)", m.Name, repo.Path, destName, res.Pushed, res.Deleted)
+	logging.Info(fmt.Sprintf("mirror %s: %s -> %s (%d pushed, %d deleted)", m.Name, repo.Path, destName, res.Pushed, res.Deleted),
+		"mirror", m.Name, "source", repo.Path, "destination", destName,
+		"refs_pushed", res.Pushed, "refs_deleted", res.Deleted)
 }
 
 // cacheKey turns a repository path into a flat directory name. The sha256

@@ -3,11 +3,11 @@ package sync
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"time"
 
 	"github.com/clouddrove/syncerd/internal/config"
+	"github.com/clouddrove/syncerd/internal/logging"
 	"github.com/clouddrove/syncerd/internal/notify"
 	"github.com/clouddrove/syncerd/internal/registry"
 	"github.com/clouddrove/syncerd/internal/runreport"
@@ -131,7 +131,7 @@ func NewSyncer(cfg *config.Config) (*Syncer, error) {
 		}
 
 		destRegs = append(destRegs, destReg)
-		log.Printf("Connected to destination registry: %s (%s)", destCfg.Name, destCfg.Type)
+		logging.Info(fmt.Sprintf("Connected to destination registry: %s (%s)", destCfg.Name, destCfg.Type))
 	}
 
 	srcAuth := getSourceAuth(cfg)
@@ -170,11 +170,12 @@ func NewSyncer(cfg *config.Config) (*Syncer, error) {
 func (s *Syncer) SyncAll(ctx context.Context) (*Report, error) {
 	report := &Report{StartedAt: time.Now().UTC()}
 	s.currentReport = report
-	log.Println("Starting sync process...")
+	logging.Info("Starting sync process...")
 
 	for _, imgCfg := range s.config.Images {
 		if err := s.SyncImage(ctx, imgCfg); err != nil {
-			log.Printf("Error syncing image %s: %v", imgCfg.Name, err)
+			logging.Error(fmt.Sprintf("Error syncing image %s: %v", imgCfg.Name, err),
+				"image", imgCfg.Name, "error", err.Error())
 			if s.config.FailFast {
 				report.EndedAt = time.Now().UTC()
 				s.currentReport = nil
@@ -188,7 +189,8 @@ func (s *Syncer) SyncAll(ctx context.Context) (*Report, error) {
 		}
 	}
 
-	log.Println("Sync process completed")
+	logging.Info("Sync process completed",
+		"synced", len(report.NewSyncs), "skipped", report.Skipped, "failed", len(report.Failures))
 	report.EndedAt = time.Now().UTC()
 	s.currentReport = nil
 
@@ -316,7 +318,7 @@ func (s *Syncer) buildFailureMessage(events []FailureEvent) notify.Message {
 }
 
 func (s *Syncer) SyncImage(ctx context.Context, imgCfg config.ImageConfig) error {
-	log.Printf("Syncing image: %s", imgCfg.Name)
+	logging.Info(fmt.Sprintf("Syncing image: %s", imgCfg.Name))
 
 	// Normalize image name
 	imageName := registry.NormalizeDockerHubImage(imgCfg.Name)
@@ -359,7 +361,7 @@ func (s *Syncer) SyncImage(ctx context.Context, imgCfg config.ImageConfig) error
 				tagsToSync = append(tagsToSync, tag)
 			}
 		}
-		log.Printf("Found %d tags for %s", len(tagsToSync), imageName)
+		logging.Info(fmt.Sprintf("Found %d tags for %s", len(tagsToSync), imageName))
 	} else {
 		// Default: sync latest tag
 		tagsToSync = []string{"latest"}
@@ -368,7 +370,8 @@ func (s *Syncer) SyncImage(ctx context.Context, imgCfg config.ImageConfig) error
 	// Sync each tag to all destinations
 	for _, tag := range tagsToSync {
 		if err := s.SyncTag(ctx, imageName, tag, imgCfg); err != nil {
-			log.Printf("Error syncing %s:%s: %v", imageName, tag, err)
+			logging.Error(fmt.Sprintf("Error syncing %s:%s: %v", imageName, tag, err),
+				"image", imageName, "tag", tag, "error", err.Error())
 			if s.config.FailFast {
 				return err
 			}
@@ -380,7 +383,7 @@ func (s *Syncer) SyncImage(ctx context.Context, imgCfg config.ImageConfig) error
 
 func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg config.ImageConfig) error {
 	sourceRef := fmt.Sprintf("%s/%s:%s", s.sourceRegistry.GetRegistryURL(), imageName, tag)
-	log.Printf("Syncing tag: %s", sourceRef)
+	logging.Info(fmt.Sprintf("Syncing tag: %s", sourceRef))
 
 	// Copy image to each destination
 	for i, destReg := range s.destRegistries {
@@ -389,7 +392,7 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 		destRef := fmt.Sprintf("%s/%s:%s", destReg.GetRegistryURL(), destImageName, tag)
 
 		if s.state.IsSynced(destCfg.Name, imageName, tag) {
-			log.Printf("Already synced (state): %s -> %s", sourceRef, destRef)
+			logging.Info(fmt.Sprintf("Already synced (state): %s -> %s", sourceRef, destRef))
 			if s.currentReport != nil {
 				s.currentReport.Skipped++
 			}
@@ -399,11 +402,12 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 		// Check if image already exists in destination
 		exists, err := destReg.ImageExists(ctx, destImageName, tag)
 		if err != nil {
-			log.Printf("Warning: failed to check if image exists in %s: %v", destCfg.Name, err)
+			logging.Warn(fmt.Sprintf("Warning: failed to check if image exists in %s: %v", destCfg.Name, err),
+				"destination", destCfg.Name, "error", err.Error())
 		}
 
 		if exists {
-			log.Printf("Image %s:%s already exists in %s, skipping", destImageName, tag, destCfg.Name)
+			logging.Info(fmt.Sprintf("Image %s:%s already exists in %s, skipping", destImageName, tag, destCfg.Name))
 			s.state.MarkSynced(destCfg.Name, imageName, tag)
 			if s.currentReport != nil {
 				s.currentReport.Skipped++
@@ -413,7 +417,8 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 
 		// Copy image using crane
 		if err := s.copyImage(ctx, sourceRef, destReg, destImageName, tag); err != nil {
-			log.Printf("Failed to copy to %s: %v", destCfg.Name, err)
+			logging.Error(fmt.Sprintf("Failed to copy to %s: %v", destCfg.Name, err),
+				"destination", destCfg.Name, "image", imageName, "tag", tag, "error", err.Error())
 			if s.currentReport != nil {
 				s.currentReport.Failures = append(s.currentReport.Failures, FailureEvent{
 					Destination: destCfg.Name,
@@ -438,7 +443,8 @@ func (s *Syncer) SyncTag(ctx context.Context, imageName, tag string, imgCfg conf
 				Ref:         destRef,
 			})
 		}
-		log.Printf("Successfully synced %s:%s to %s (%s)", destImageName, tag, destCfg.Name, destCfg.Type)
+		logging.Info(fmt.Sprintf("Successfully synced %s:%s to %s (%s)", destImageName, tag, destCfg.Name, destCfg.Type),
+			"image", destImageName, "tag", tag, "destination", destCfg.Name, "destination_type", destCfg.Type)
 	}
 
 	return nil
