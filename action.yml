@@ -18,6 +18,22 @@ inputs:
     description: "Run once and exit (true/false)"
     required: false
     default: "true"
+  dry-run:
+    description: "Report what would be created, pushed, and pruned without writing anything. git-sync only."
+    required: false
+    default: "false"
+  report:
+    description: "Write a machine readable JSON report of the run to this path. Empty disables it."
+    required: false
+    default: ""
+  metrics-file:
+    description: "Write Prometheus textfile collector metrics for the last run to this path. Empty disables it."
+    required: false
+    default: ""
+  log-format:
+    description: "Log output format: text or json."
+    required: false
+    default: "text"
 
 runs:
   using: "docker"
@@ -26,8 +42,28 @@ runs:
   # type=semver,pattern=v{{major}} produces v0 for the current line; this
   # must move to v1 once a 1.0 release ships.
   image: "docker://ghcr.io/clouddrove/syncerd:v0"
+  # args is a fixed list: it cannot branch on inputs.command at the shell
+  # level, only per element via an expression. --dry-run exists on git-sync
+  # only, so it cannot simply be appended: an unconditional --dry-run would
+  # be an unknown flag on sync and break every existing image sync workflow.
+  # The element below evaluates to "--dry-run=<value>" when command is
+  # git-sync, and to an empty string otherwise. An empty string element is
+  # still passed to the binary as its own argv entry, but neither command
+  # has a positional-argument validator (cobra's default Args is
+  # ArbitraryArgs), so it is silently ignored; confirmed by running the
+  # built binary with a trailing empty-string argument and getting the
+  # normal "at least one destination is required" error, not an argument
+  # parsing error.
+  #
+  # Hyphenated input names (dry-run, metrics-file, log-format) must be read
+  # with bracket syntax, inputs['name'], not inputs.name: the expression
+  # parser reads the hyphen in dot notation as subtraction.
   args:
     - "${{ inputs.command }}"
     - "--config"
     - "${{ inputs.config }}"
     - "--once=${{ inputs.once }}"
+    - "${{ inputs.command == 'git-sync' && format('--dry-run={0}', inputs['dry-run']) || '' }}"
+    - "--report=${{ inputs.report }}"
+    - "--metrics-file=${{ inputs['metrics-file'] }}"
+    - "--log-format=${{ inputs['log-format'] }}"
