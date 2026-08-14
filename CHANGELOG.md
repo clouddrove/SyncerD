@@ -7,16 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-14
+
 ### Added
 - `--report <path>` writes a machine readable JSON run summary after each run, one schema shared by `sync` and `git-sync` so a consumer does not need to know which command produced the file; written on failed runs too, since those are the ones worth inspecting, and a write failure never fails the run
 - `--log-format json` opt in structured logging for `sync` and `git-sync`; text remains the default and reproduces the historical `log.Printf` output byte for byte, since operators grep it. JSON carries per repository and per run values as real fields
 - `--metrics-file <path>` writes Prometheus textfile collector metrics (`syncerd_last_run_unixtime`, `syncerd_last_success_unixtime`, `syncerd_last_run_success`, `syncerd_last_run_duration_seconds`, `syncerd_last_run_items`) after each run, for both `sync` and `git-sync`, including failed runs; `sync` and `git-sync` series coexist in the same file. A `git-sync --dry-run` writes no metrics, since it created, pushed, and deleted nothing
+- GitHub Action: new `dry-run`, `report`, `metrics-file`, and `log-format` inputs. `dry-run` is the safety guard for git mirroring, whose default push mode deletes destination refs absent at the source, and it was previously unreachable from a workflow (#38)
+- Azure DevOps extension: documented git mirroring, including how provider tokens are supplied through pipeline variables. No code change was needed, since the task's `command` input already accepted any subcommand (#38)
 
 ### Changed
 - A run time failure (a bad config, an unreachable provider) now prints only the error, without cobra's flag usage dump that used to follow it; the error is routed through the same logger as every other line, so a `--log-format json` run stays parseable end to end. A flag parse error (a typo like `--bogus-flag`) is unaffected and still prints the usage block, since that failure never reaches the point where usage gets silenced
 
 ### Fixed
 - `internal/state`'s atomic write no longer leaves a stray `.tmp` file behind when the rename fails, the same fix already applied to the run report writer
+- The README's GitHub Action example for git mirroring omitted the `env:` block carrying provider tokens, so anyone copying it got `token is required` (#38)
 
 ## [0.1.0] - 2026-08-11
 
