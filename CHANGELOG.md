@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-14
+
 ### Added
 - Native authentication for private Amazon ECR destinations: when a destination host matches `<account>.dkr.ecr.<region>.amazonaws.com`, SyncerD calls `ecr:GetAuthorizationToken` through the standard AWS credential chain (environment variables, shared config, IRSA, instance role) instead of requiring a `docker login`. Tokens are cached per account and region and refetched before they expire, so a long-running sync no longer needs an external refresh loop, and a Kubernetes deployment using IRSA no longer needs a `dockerConfigSecret` for ECR. An existing docker credential entry for the same registry still wins, so setups that log in explicitly are unchanged. Public ECR (`public.ecr.aws`) is a different service and is not covered
 

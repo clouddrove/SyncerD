@@ -121,7 +121,7 @@ Requires Go 1.23+ to build from source.
 Add SyncerD to your workflow:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.1
+- uses: clouddrove/syncerd@v0.1.2
   with:
     config: syncerd.yaml
     once: "true"
@@ -139,7 +139,7 @@ For **AWS ECR**, add `aws-actions/configure-aws-credentials` before SyncerD and 
     role-to-assume: arn:aws:iam::123456789012:role/syncerd
     aws-region: eu-west-1
 
-- uses: clouddrove/syncerd@v0.1.1
+- uses: clouddrove/syncerd@v0.1.2
   with:
     config: syncerd.yaml
 ```
@@ -157,7 +157,7 @@ steps:
       username: ${{ github.actor }}
       password: ${{ secrets.GITHUB_TOKEN }}
 
-  - uses: clouddrove/syncerd@v0.1.1
+  - uses: clouddrove/syncerd@v0.1.2
     env:
       DOCKER_CONFIG: /github/workspace/.docker     # same directory, path inside the container
     with:
@@ -181,7 +181,7 @@ steps:
 Since the default push mode deletes destination refs that are absent at the source, **run once with `dry-run: "true"` before trusting a new mirror config**:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.1
+- uses: clouddrove/syncerd@v0.1.2
   with:
     command: git-sync
     config: syncerd.yaml
@@ -195,7 +195,7 @@ Since the default push mode deletes destination refs that are absent at the sour
 Once the dry run output looks right, drop `dry-run` (or set it to `"false"`) to let it write for real:
 
 ```yaml
-- uses: clouddrove/syncerd@v0.1.1
+- uses: clouddrove/syncerd@v0.1.2
   with:
     command: git-sync
     config: syncerd.yaml
