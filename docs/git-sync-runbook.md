@@ -623,8 +623,56 @@ Under the default `mirror` push mode the branch disappears from the destination
 on the first run after the pull request closes: the source stops listing it, and
 prune removes what the source no longer has.
 
-The pull request object itself, its title, discussion, and reviews, is not
-recreated at the destination. Only the commits are.
+### Recreating the pull requests themselves
+
+Set `mirror_objects` and each open source pull request is recreated at the
+destination as a real pull request, updated on every run, with its discussion,
+its inline review comments, and its review verdicts:
+
+```yaml
+      pull_requests:
+        enabled: true
+        mirror_objects: true      # default false, requires enabled
+        comments: true            # default true once mirror_objects is on
+        reviews: true             # default true once mirror_objects is on
+        labels: true              # default true
+```
+
+With `mirror_objects` on, **every** mirrored pull request gets a
+`branch_prefix` branch, including one whose head is already a branch of the
+source repository. A destination pull request has to name one head branch, and
+a uniform name is what keeps the mapping simple. With it off, the P1 rule
+stands: fork heads only.
+
+**A merged source pull request is closed at the destination, not merged.** A
+merge performed at the destination would create a merge commit that differs
+from the source's, and the branch mirror then force overwrites it, so the
+destination would report a merge whose commit no longer exists. SyncerD closes
+the pull request instead and comments naming the source merge commit, which by
+then genuinely is on the destination's base branch.
+
+**Review verdicts are mirrored as text, never as real approvals.** An approval
+posted by SyncerD's token would be a review nobody performed, and on a
+destination with required approvals it would satisfy a rule no human satisfied.
+
+**Mentions and issue references are neutralised.** `@someone` in a mirrored
+body would otherwise notify whichever destination account owns that handle, and
+`#123` would cross link to an unrelated destination issue. Both are rewritten
+to render identically and link to nothing. Text inside fenced code blocks is
+left byte for byte.
+
+Everything SyncerD writes carries a hidden marker. That is how a later run
+updates its own comments in place instead of posting duplicates, and how a
+destination pull request is re-identified after a lost state file, so losing
+state causes re-inspection rather than a second copy of everything.
+
+Only comments SyncerD wrote are ever edited or deleted. A comment written by a
+person at the destination is left alone, even though the source is the
+authority: the source is authority over what it published, not over what
+somebody else said.
+
+Today this needs GitHub on both ends. Any other destination is rejected at
+startup.
 
 **Read this before enabling it.** A fork pull request head is code written by
 anyone who can open a pull request against the source. Turning this on pushes

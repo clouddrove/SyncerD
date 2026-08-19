@@ -380,6 +380,8 @@ export SYNCERD_GIT_GL_TOKEN=your-gitlab-token
 
 **Pull request heads (opt in):** set `pull_requests.enabled: true` on a mirror and the commits behind each open pull request opened from a **fork** are pushed to the destination as a branch, default `syncerd/pr/<number>`. Without it those commits reach the destination nowhere, since a fork pull request has no branch in the source repository. A pull request opened from a source branch already mirrors under its own name and gets no second copy. The pull request itself is not recreated at the destination yet. Off by default because a fork head is third-party code, and a destination that builds on branch push would run it: read the security note in [docs/git-sync-runbook.md](docs/git-sync-runbook.md#mirroring-pull-request-heads) before enabling it.
 
+**Mirrored pull requests (opt in):** add `pull_requests.mirror_objects: true` and each open source pull request is recreated at the destination as a real pull request, kept in step on every run, with its discussion, inline review comments, and review verdicts. The source is the single authority; nothing written at the destination flows back. A merged source pull request is closed at the destination with a note naming the merge commit, never merged there, because a destination merge would diverge from the mirrored base branch. Review verdicts are mirrored as attributed text rather than real approvals. Mentions and issue references in mirrored text are neutralised so a mirror never notifies or cross links anyone. GitHub on both ends for now.
+
 Run with `--dry-run` to print the ref changes each mirror would make, per repository, without creating, pushing, or deleting anything.
 
 **Limitations:**
