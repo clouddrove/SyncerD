@@ -70,6 +70,12 @@ func (p *Provider) SupportsNesting() bool { return true }
 // CloneURL returns the HTTPS git URL for a project path relative to the
 // configured owner. A path containing slashes addresses a subgroup beneath
 // the owner, never a top level group.
+// QualifiedPath prepends the configured group, giving the full project path
+// ListRepos reports.
+func (p *Provider) QualifiedPath(name string) string {
+	return p.owner + "/" + strings.Trim(name, "/")
+}
+
 func (p *Provider) CloneURL(path string) string {
 	return fmt.Sprintf("%s/%s/%s.git", p.base, p.owner, path)
 }

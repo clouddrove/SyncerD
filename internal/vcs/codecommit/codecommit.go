@@ -139,6 +139,12 @@ func (p *Provider) SupportsNesting() bool { return false }
 // This is only used for a destination name; it assumes a bare name with no
 // slash. A nested name is rejected upstream by SupportsNesting before the
 // engine ever calls this method, so no guard is repeated here.
+// QualifiedPath returns the name unchanged. CodeCommit repository names are
+// flat within an account and region, which is the form ListRepos reports.
+func (p *Provider) QualifiedPath(name string) string {
+	return strings.Trim(name, "/")
+}
+
 func (p *Provider) CloneURL(name string) string {
 	return fmt.Sprintf("https://git-codecommit.%s.amazonaws.com/v1/repos/%s", p.region, name)
 }

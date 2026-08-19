@@ -60,6 +60,16 @@ type Remote interface {
 	// for source repositories, which carry their own CloneURL from
 	// ListRepos.
 	CloneURL(name string) string
+	// QualifiedPath turns an owner relative destination name into the same
+	// fully qualified form ListRepos reports in Repo.Path.
+	//
+	// Two conventions meet here and used to collide silently. A rendered
+	// destination name is owner relative, because CloneURL and EnsureRepo
+	// prepend the owner themselves. Every API that addresses a repository
+	// wants the qualified path. Without this, a destination pull request
+	// call built "/repos/widget/pulls" instead of "/repos/acme/widget/pulls"
+	// and answered 404 for every repository.
+	QualifiedPath(name string) string
 	// GitCredential is called per run because Entra tokens and AWS
 	// credentials are short lived.
 	GitCredential(ctx context.Context) (GitCredential, error)

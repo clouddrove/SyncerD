@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,13 @@ type PRRecord struct {
 // GitState tracks mirrored repositories. It lives in its own file so a
 // corrupt git state cannot break image sync.
 type GitState struct {
+	// mu guards every map below. The git engine mirrors repositories on a
+	// pool of goroutines and internal/prsync writes pull request records
+	// from inside that pool, so unguarded access is a concurrent map write,
+	// which aborts the process outright and cannot be recovered by the
+	// worker that caused it.
+	mu sync.Mutex
+
 	Version   int                             `json:"version"`
 	UpdatedAt time.Time                       `json:"updated_at"`
 	Mirrored  map[string]map[string]RepoState `json:"mirrored"` // mirror -> source repo path -> state
@@ -81,13 +89,20 @@ func (s *GitState) Save(path string) error {
 	if path == "" {
 		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.UpdatedAt = time.Now().UTC()
 	return writeAtomic(path, s)
 }
 
 // GetPR returns the record for one mirrored pull request.
 func (s *GitState) GetPR(mirror, repoPath string, number int) (PRRecord, bool) {
-	if s == nil || s.PullRequests == nil {
+	if s == nil {
+		return PRRecord{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.PullRequests == nil {
 		return PRRecord{}, false
 	}
 	byRepo, ok := s.PullRequests[mirror]
@@ -104,6 +119,8 @@ func (s *GitState) GetPR(mirror, repoPath string, number int) (PRRecord, bool) {
 
 // MarkPR records the outcome of mirroring one pull request.
 func (s *GitState) MarkPR(mirror, repoPath string, number int, rec PRRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.PullRequests == nil {
 		s.PullRequests = make(map[string]map[string]map[int]PRRecord)
 	}
@@ -118,7 +135,12 @@ func (s *GitState) MarkPR(mirror, repoPath string, number int, rec PRRecord) {
 
 // ForgetPR drops a record, so the next run re-inspects the destination.
 func (s *GitState) ForgetPR(mirror, repoPath string, number int) {
-	if s == nil || s.PullRequests == nil {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.PullRequests == nil {
 		return
 	}
 	if byRepo, ok := s.PullRequests[mirror]; ok {
@@ -130,7 +152,12 @@ func (s *GitState) ForgetPR(mirror, repoPath string, number int) {
 
 // Get returns the recorded state for a source repository under a mirror.
 func (s *GitState) Get(mirror, repoPath string) (RepoState, bool) {
-	if s == nil || s.Mirrored == nil {
+	if s == nil {
+		return RepoState{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Mirrored == nil {
 		return RepoState{}, false
 	}
 	byRepo, ok := s.Mirrored[mirror]
@@ -143,6 +170,8 @@ func (s *GitState) Get(mirror, repoPath string) (RepoState, bool) {
 
 // Mark records a successful mirror.
 func (s *GitState) Mark(mirror, repoPath, destPath, fingerprint string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Mirrored == nil {
 		s.Mirrored = make(map[string]map[string]RepoState)
 	}

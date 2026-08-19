@@ -20,6 +20,10 @@ type fakeRemote struct {
 }
 
 func (f *fakeRemote) CloneURL(path string) string { return filepath.Join(f.base, path+".git") }
+
+// QualifiedPath mirrors what a real provider does: the rendered name is
+// owner relative, and the qualified form is what an API addresses.
+func (f *fakeRemote) QualifiedPath(name string) string { return "acme/" + name }
 func (f *fakeRemote) GitCredential(context.Context) (vcs.GitCredential, error) {
 	return vcs.GitCredential{}, nil
 }
@@ -697,5 +701,70 @@ func TestWithoutMirrorObjectsASameRepoPullRequestStillGetsNoBranch(t *testing.T)
 	}
 	if rep.Mirrored[0].PRBranchesPushed != 0 {
 		t.Errorf("PRBranchesPushed = %d, want 0", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+// recordingWriter captures the repository path the engine hands the pull
+// request writer, which is the value every destination API interpolates.
+type recordingWriter struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (r *recordingWriter) record(p string) {
+	r.mu.Lock()
+	r.paths = append(r.paths, p)
+	r.mu.Unlock()
+}
+
+func (r *recordingWriter) FindPullRequest(_ context.Context, repo, _ string) (vcs.PullRequest, bool, error) {
+	r.record(repo)
+	return vcs.PullRequest{}, false, nil
+}
+func (r *recordingWriter) CreatePullRequest(_ context.Context, repo string, spec vcs.PullRequestSpec) (vcs.PullRequest, error) {
+	r.record(repo)
+	return vcs.PullRequest{Number: 100, State: vcs.PROpen, HeadBranch: spec.HeadBranch}, nil
+}
+func (r *recordingWriter) UpdatePullRequest(_ context.Context, repo string, _ int, _ vcs.PullRequestSpec) error {
+	r.record(repo)
+	return nil
+}
+func (r *recordingWriter) ClosePullRequest(_ context.Context, repo string, _ int) error {
+	r.record(repo)
+	return nil
+}
+
+func TestDestinationPullRequestsUseTheQualifiedRepositoryPath(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+
+	writer := &recordingWriter{}
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha, BaseBranch: "main",
+	}}})
+	m.PullRequests.MirrorObjects = true
+	m.DestPRs = writer
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if len(writer.paths) == 0 {
+		t.Fatal("the writer was never called")
+	}
+
+	// The rendered destination name is owner relative because CloneURL and
+	// EnsureRepo prepend the owner themselves. Handing that bare name to an
+	// API that wants a full path produced "/repos/app/pulls" and 404ed on
+	// every repository.
+	for _, got := range writer.paths {
+		if got != "acme/app" {
+			t.Errorf("writer received %q, want the qualified path acme/app", got)
+		}
 	}
 }

@@ -579,9 +579,12 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 	if m.PullRequests.Enabled && m.PullRequests.MirrorObjects && m.DestPRs != nil {
 		var perr error
 		prRes, perr = prsync.Sync(ctx, prs, prsync.Options{
-			Mirror:       m.Name,
-			SourceRepo:   repo.Path,
-			DestRepo:     destName,
+			Mirror:     m.Name,
+			SourceRepo: repo.Path,
+			// Qualified, not the rendered name: the rendered name is owner
+			// relative, and every destination API addresses a repository by
+			// its full path.
+			DestRepo:     m.Dest.QualifiedPath(destName),
 			BranchPrefix: m.PullRequests.BranchPrefix,
 			Source:       m.SourcePRs,
 			Dest:         m.DestPRs,

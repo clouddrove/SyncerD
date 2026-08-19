@@ -134,6 +134,13 @@ func (p *Provider) SupportsNesting() bool { return false }
 // This is only used for a destination name; it assumes a bare name with no
 // slash. A nested name is rejected upstream by SupportsNesting before the
 // engine ever calls this method, so no guard is repeated here.
+// QualifiedPath prepends the configured project, matching the project/name
+// form ListRepos reports. The organisation is not part of it: it is a
+// separate segment of every URL rather than part of the repository path.
+func (p *Provider) QualifiedPath(name string) string {
+	return p.project + "/" + strings.Trim(name, "/")
+}
+
 func (p *Provider) CloneURL(name string) string {
 	return fmt.Sprintf("%s/%s/%s/_git/%s", p.apiURL, p.org, p.project, name)
 }
