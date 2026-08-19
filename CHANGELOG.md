@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-19
+
 ### Added
 - `git-sync` can mirror the commits behind open pull requests. A pull request opened from a fork has no branch in the source repository, so its commits previously reached no destination at all; with `pull_requests.enabled` on a mirror, the head is pushed as an ordinary branch under `branch_prefix` (default `syncerd/pr/<number>`), and the default mirror push mode prunes it once the pull request closes. A head that lives in the source repository already arrives with the ordinary branch mirror and gets no second copy. A repository whose own branches sit under the prefix is refused rather than silently overwritten, and one unreachable fork head is a warning rather than a failed repository. Off by default: a fork head is third party code, and a destination that builds on branch push would run it. GitHub sources only for now; the pull request objects themselves are not recreated at the destination yet
 
