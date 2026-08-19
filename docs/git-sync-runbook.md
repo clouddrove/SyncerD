@@ -210,7 +210,7 @@ query and the one-file-per-command note.
 
 | Provider | Token | Scopes |
 |---|---|---|
-| GitHub | fine-grained PAT | Metadata read, Contents read, Administration write (only if `create_missing`) |
+| GitHub | fine-grained PAT | Metadata read, Contents read, Administration write (only if `create_missing`); a fine grained token must also grant access to each private repository you expect to be mirrored, or discovery reports fewer repositories than the source holds |
 | GitLab | group access token | `api` to create projects, plus `write_repository` |
 
 Environment variable names derive from the **provider name** in your config,
@@ -575,6 +575,17 @@ config that looks valid can still fail at the credential or network step:
   request paths are Cloud shaped, so Bitbucket Data Center is not supported.
   Bitbucket also has no archived concept, so `skip_archived` has no effect
   for a Bitbucket source.
+
+**A personal account source needs a token belonging to that account.**
+GitHub's `GET /users/{owner}/repos` returns public repositories only, whatever
+token is presented, so SyncerD lists a personal account through
+`GET /user/repos` instead, which reports private repositories too. That
+endpoint only ever describes the account the token belongs to. Mirroring
+someone else's personal account therefore discovers its public repositories
+and nothing more, because no credential can see further. Organisation owners
+are unaffected: `GET /orgs/{org}/repos` reports private repositories to any
+token with access. The same shape applies to GitLab, where a user namespace
+falls back to `GET /users/{owner}/projects`.
 
 **Released binaries need git on PATH.** goreleaser ships a bare binary with
 no bundled git; install git 2.30 or newer on any host that runs a release

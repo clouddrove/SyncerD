@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -106,6 +107,64 @@ func TestListReposFallsBackToUserEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/users/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]any{{"name": "personal", "full_name": "acme/personal", "default_branch": "main"}})
+	})
+
+	p, _ := newProvider(t, mux)
+	repos, err := p.ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "personal" {
+		t.Fatalf("unexpected repos: %+v", repos)
+	}
+}
+
+func TestListReposUsesAuthenticatedEndpointForTheTokenOwner(t *testing.T) {
+	var query url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"login": "Acme"})
+	})
+	mux.HandleFunc("/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		writeJSON(w, []map[string]any{{"name": "secret", "full_name": "acme/secret", "default_branch": "main"}})
+	})
+	mux.HandleFunc("/users/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the public user listing hides private repositories and must not be used for the token owner")
+	})
+
+	p, _ := newProvider(t, mux)
+	repos, err := p.ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "secret" {
+		t.Fatalf("unexpected repos: %+v", repos)
+	}
+	if got := query.Get("visibility"); got != "all" {
+		t.Errorf("visibility = %q, want all", got)
+	}
+	if got := query.Get("affiliation"); got != "owner" {
+		t.Errorf("affiliation = %q, want owner", got)
+	}
+}
+
+func TestListReposUsesPublicEndpointForAnotherAccount(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/acme/repos", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"login": "someone-else"})
+	})
+	mux.HandleFunc("/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the authenticated listing describes the token owner, not the configured owner")
 	})
 	mux.HandleFunc("/users/acme/repos", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []map[string]any{{"name": "personal", "full_name": "acme/personal", "default_branch": "main"}})
