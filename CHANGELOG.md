@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-19
+
 ### Fixed
 - `pull_requests.mirror_objects` could not work against GitHub, GitLab, or Bitbucket. The engine handed the destination side the rendered repository name, which is owner relative because the clone URL and repository creation prepend the owner themselves, while every destination pull request and comment endpoint interpolates that value as a fully qualified path: a GitHub destination asked for `/repos/widget/pulls` rather than `/repos/acme/widget/pulls` and every call answered 404. Azure DevOps failed the other way, duplicating the project into a path that already carried it, so listing pull requests 404d for every repository
 - Mirroring several repositories at once could abort the process. Pull request records were written into the shared git state from inside the engine's worker pool without the lock the engine uses for its own access, and two repositories finishing together is a concurrent map write, which Go turns into an unrecoverable crash. The state type now guards its own maps
