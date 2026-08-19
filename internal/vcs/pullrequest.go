@@ -77,8 +77,13 @@ type ReviewComment struct {
 	Path      string
 	Line      int
 	Side      string // LEFT or RIGHT
-	CommitSHA string
+	CommitSHA string // the head commit the comment is anchored to
 	InReplyTo string
+
+	// BaseSHA is the commit the diff is measured from. GitLab requires it
+	// alongside CommitSHA to anchor a comment at all, and CodeCommit sends
+	// it as beforeCommitId. GitHub and Bitbucket ignore it.
+	BaseSHA string
 }
 
 // Review is a review verdict on a pull request.
@@ -167,9 +172,23 @@ type PullRequestWriter interface {
 	FindPullRequest(ctx context.Context, repoPath, headBranch string) (PullRequest, bool, error)
 	CreatePullRequest(ctx context.Context, repoPath string, spec PullRequestSpec) (PullRequest, error)
 	UpdatePullRequest(ctx context.Context, repoPath string, number int, spec PullRequestSpec) error
-	// SetPullRequestState opens or closes a pull request. PRMerged is
-	// treated as closed, for the reason given on the interface.
-	SetPullRequestState(ctx context.Context, repoPath string, number int, state PRState) error
+	// ClosePullRequest closes a pull request. Every provider can do this.
+	// Reopening is a separate, optional capability, because two providers
+	// cannot do it at all.
+	ClosePullRequest(ctx context.Context, repoPath string, number int) error
+}
+
+// PullRequestReopener is implemented by destinations that can move a closed
+// pull request back to open.
+//
+// Bitbucket Cloud has no reopen endpoint, and CodeCommit documents that the
+// only valid status transition is OPEN to CLOSED. Reopening is therefore a
+// capability a destination may or may not have, rather than something
+// PullRequestWriter can assume. A destination without it leaves the pull
+// request closed and says so, rather than opening a second pull request for
+// the same work.
+type PullRequestReopener interface {
+	ReopenPullRequest(ctx context.Context, repoPath string, number int) error
 }
 
 // PullRequestConversation reads and writes the discussion around a pull

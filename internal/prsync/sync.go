@@ -108,6 +108,8 @@ func syncOne(ctx context.Context, pr vcs.PullRequest, opts Options, res *Result)
 		return nil
 	}
 
+	divergent := false
+
 	spec := vcs.PullRequestSpec{
 		Title:      pr.Title,
 		Body:       ComposeBody(pr, opts.SourceRepo),
@@ -149,10 +151,26 @@ func syncOne(ctx context.Context, pr vcs.PullRequest, opts Options, res *Result)
 			// A destination someone closed by hand is reopened first: the
 			// source is the authority on whether this work is still open.
 			if pr.State == vcs.PROpen && destState != vcs.PROpen {
-				if err := opts.Dest.SetPullRequestState(ctx, opts.DestRepo, destNumber, vcs.PROpen); err != nil {
-					return fmt.Errorf("reopen destination pull request: %w", err)
+				reopener, canReopen := opts.Dest.(vcs.PullRequestReopener)
+				switch {
+				case !canReopen:
+					// Bitbucket has no reopen endpoint and CodeCommit
+					// forbids the transition. Say so once and leave the
+					// pull request closed: a second pull request for the
+					// same work is worse than a closed one somebody can
+					// reopen by hand.
+					if rec.DestState != destStateDivergent {
+						logging.Warn(fmt.Sprintf("mirror %s: %s#%d is open at the source but destination pull request %d is closed, and this destination cannot reopen; leaving it closed",
+							opts.Mirror, opts.SourceRepo, pr.Number, destNumber),
+							"mirror", opts.Mirror, "source", opts.SourceRepo, "pull_request", pr.Number)
+					}
+					divergent = true
+				default:
+					if err := reopener.ReopenPullRequest(ctx, opts.DestRepo, destNumber); err != nil {
+						return fmt.Errorf("reopen destination pull request: %w", err)
+					}
+					destState = vcs.PROpen
 				}
-				destState = vcs.PROpen
 			}
 			if err := opts.Dest.UpdatePullRequest(ctx, opts.DestRepo, destNumber, spec); err != nil {
 				return fmt.Errorf("update destination pull request: %w", err)
@@ -183,6 +201,11 @@ func syncOne(ctx context.Context, pr vcs.PullRequest, opts Options, res *Result)
 	if !opts.DryRun {
 		rec.DestNumber = destNumber
 		rec.DestState = string(destState)
+		if divergent {
+			// Remembered so the warning is not repeated on every run for a
+			// destination that can never be reopened.
+			rec.DestState = destStateDivergent
+		}
 		rec.SourceUpdated = pr.UpdatedAt
 		opts.State.MarkPR(opts.Mirror, opts.SourceRepo, pr.Number, rec)
 	}
@@ -223,7 +246,7 @@ func closeDestination(ctx context.Context, pr vcs.PullRequest, destNumber int, o
 	// request that reaches a provider cannot be read as "merge this". A
 	// provider is free to map PRMerged however it likes; this caller never
 	// gives it the chance.
-	if err := opts.Dest.SetPullRequestState(ctx, opts.DestRepo, destNumber, vcs.PRClosed); err != nil {
+	if err := opts.Dest.ClosePullRequest(ctx, opts.DestRepo, destNumber); err != nil {
 		return fmt.Errorf("close destination pull request: %w", err)
 	}
 	return nil
@@ -237,10 +260,23 @@ func mergedAs(pr vcs.PullRequest) string {
 	return " as " + pr.MergeSHA
 }
 
-// statesAgree reports whether the destination already reflects the source.
+// destStateDivergent marks a destination that is closed while its source is
+// open, on a provider that cannot reopen. The divergence is permanent
+// unless somebody reopens it by hand, so it is recorded rather than
+// rediscovered.
+const destStateDivergent = "closed-divergent"
+
+// statesAgree reports whether the destination already reflects the source,
+// or is as close to it as this destination can get.
+//
 // Merged and closed are the same thing at the destination, since a merged
-// source closes rather than merges.
+// source closes rather than merges. A recorded divergence agrees with
+// everything: SyncerD has already decided it cannot fix it, and retrying
+// every run would mean a pointless write per run forever.
 func statesAgree(source, dest vcs.PRState) bool {
+	if string(dest) == destStateDivergent {
+		return true
+	}
 	if source == vcs.PROpen {
 		return dest == vcs.PROpen
 	}

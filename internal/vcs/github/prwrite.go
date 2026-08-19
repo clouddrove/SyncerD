@@ -103,19 +103,26 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 	return nil
 }
 
-// SetPullRequestState opens or closes a pull request.
+// ClosePullRequest closes a pull request.
 //
-// PRMerged maps to closed. Merging at the destination would create a merge
-// commit that differs from the source's, which the ref mirror then force
-// overwrites on the base branch, so the destination would report a merge
-// whose commit no longer exists. The caller closes and comments instead.
-func (p *Provider) SetPullRequestState(ctx context.Context, repoPath string, number int, state vcs.PRState) error {
-	want := "closed"
-	if state == vcs.PROpen {
-		want = "open"
-	}
+// There is no merge here, deliberately. Merging at the destination would
+// create a merge commit that differs from the source's, which the ref
+// mirror then force overwrites on the base branch, so the destination would
+// report a merge whose commit no longer exists. A merged source pull
+// request is closed and commented instead.
+func (p *Provider) ClosePullRequest(ctx context.Context, repoPath string, number int) error {
+	return p.setState(ctx, repoPath, number, "closed")
+}
 
-	payload := map[string]any{"state": want}
+// ReopenPullRequest moves a closed pull request back to open. GitHub
+// supports this; Bitbucket and CodeCommit do not, which is why it lives on
+// its own interface.
+func (p *Provider) ReopenPullRequest(ctx context.Context, repoPath string, number int) error {
+	return p.setState(ctx, repoPath, number, "open")
+}
+
+func (p *Provider) setState(ctx context.Context, repoPath string, number int, state string) error {
+	payload := map[string]any{"state": state}
 	_, _, err := p.do(ctx, http.MethodPatch, fmt.Sprintf("%s/repos/%s/pulls/%d", p.apiURL, repoPath, number), payload)
 	return err
 }

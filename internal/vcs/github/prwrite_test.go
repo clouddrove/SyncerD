@@ -12,6 +12,7 @@ import (
 
 func TestProviderImplementsPullRequestWriter(t *testing.T) {
 	var _ vcs.PullRequestWriter = (*Provider)(nil)
+	var _ vcs.PullRequestReopener = (*Provider)(nil)
 }
 
 // mergeGuard registers handlers for every merge endpoint GitHub exposes and
@@ -146,7 +147,7 @@ func TestUpdatePullRequestPatchesMutableFields(t *testing.T) {
 	}
 }
 
-func TestSetPullRequestStateClosesAMergedSourceRatherThanMerging(t *testing.T) {
+func TestClosePullRequestClosesRatherThanMerging(t *testing.T) {
 	var payload map[string]any
 	mux := http.NewServeMux()
 	mergeGuard(t, mux)
@@ -156,15 +157,15 @@ func TestSetPullRequestStateClosesAMergedSourceRatherThanMerging(t *testing.T) {
 	})
 
 	p, _ := newProvider(t, mux)
-	if err := p.SetPullRequestState(context.Background(), "acme/widget", 12, vcs.PRMerged); err != nil {
-		t.Fatalf("set state: %v", err)
+	if err := p.ClosePullRequest(context.Background(), "acme/widget", 12); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 	if payload["state"] != "closed" {
 		t.Errorf("a merged source must close the destination, got state %v", payload["state"])
 	}
 }
 
-func TestSetPullRequestStateReopens(t *testing.T) {
+func TestReopenPullRequest(t *testing.T) {
 	var payload map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widget/pulls/12", func(w http.ResponseWriter, r *http.Request) {
@@ -173,8 +174,8 @@ func TestSetPullRequestStateReopens(t *testing.T) {
 	})
 
 	p, _ := newProvider(t, mux)
-	if err := p.SetPullRequestState(context.Background(), "acme/widget", 12, vcs.PROpen); err != nil {
-		t.Fatalf("set state: %v", err)
+	if err := p.ReopenPullRequest(context.Background(), "acme/widget", 12); err != nil {
+		t.Fatalf("reopen: %v", err)
 	}
 	if payload["state"] != "open" {
 		t.Errorf("state = %v, want open", payload["state"])
