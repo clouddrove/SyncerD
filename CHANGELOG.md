@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pull_requests.mirror_objects` could not work against GitHub, GitLab, or Bitbucket. The engine handed the destination side the rendered repository name, which is owner relative because the clone URL and repository creation prepend the owner themselves, while every destination pull request and comment endpoint interpolates that value as a fully qualified path: a GitHub destination asked for `/repos/widget/pulls` rather than `/repos/acme/widget/pulls` and every call answered 404. Azure DevOps failed the other way, duplicating the project into a path that already carried it, so listing pull requests 404d for every repository
+- Mirroring several repositories at once could abort the process. Pull request records were written into the shared git state from inside the engine's worker pool without the lock the engine uses for its own access, and two repositories finishing together is a concurrent map write, which Go turns into an unrecoverable crash. The state type now guards its own maps
+- A private Docker Hub repository with `watch_tags` on failed with a 404 blamed on the image. The login response's session token was discarded, so every listing fell back to HTTP basic auth, which that API does not accept
+- A destination pull request stayed open forever once its source merged or closed. Sources are listed open only, so a finished pull request stops appearing rather than arriving with a final state, and nothing closed the mirror; the branch under it was pruned by the mirror push meanwhile. Records the source no longer lists are reconciled and closed with a note
+- Every pull request carrying a mirrored inline comment failed its conversation sync after the first run. GitHub keeps discussion and review comments in separate id spaces reached through different routes, and both were addressed through the discussion route
+- A conversation that failed part way discarded the ids of the comments it had already posted, so the next run reposted all of them, forever. A repository whose pull request pass failed was also recorded as fully mirrored, so it was skipped on the next run and never retried until an unrelated branch or tag moved
+- A single failed fetch of a pull request head deleted that branch from the destination, pulling the head out from under a mirrored pull request. The copy from the previous run is kept
+- The image sync cron could overlap itself, corrupting the run report and racing on the sync state map. Both cron loops now skip a tick rather than start a second run, validate the schedule before the first run instead of after it, and install the signal handler before the first run so a shutdown during it can still persist state
+- A malformed `exclude` glob was ignored entirely, mirroring a repository that the rule was written to keep out. Filter patterns are validated at config load
+- A Slack notification could be dropped whole. One oversized failure line, such as a transport error carrying a large HTML body, produced a block that was empty or over the size limit, and Slack rejects both
+- A failed state save on the fail-fast path was silent, so everything copied before the abort was copied again on the next run with no explanation
+- `git-sync` could not authenticate to Azure DevOps over git in `pat` mode, fixed in v0.2.1 and described there
+
+### Security
+- Patched a high severity advisory in `brace-expansion`, which the Azure DevOps extension pinned to exactly the affected version through an `overrides` entry
+
 ## [0.2.1] - 2026-08-19
 
 ### Added
