@@ -117,7 +117,7 @@ func TestCreatePullRequestSendsFullRefsAndLabels(t *testing.T) {
 	p, _ := newPATProvider(t, mux)
 	got, err := p.CreatePullRequest(context.Background(), "widget", vcs.PullRequestSpec{
 		Title: "Add login", Body: "body", HeadBranch: "syncerd/pr/7", BaseBranch: "main",
-		Draft: true, Labels: []string{"bug"},
+		Draft: true, Labels: []string{"bug"}, SyncLabels: true,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -142,6 +142,9 @@ func TestUpdatePullRequestOmitsIsDraft(t *testing.T) {
 	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullrequests/12", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&payload)
 		writeJSON(w, map[string]any{"pullRequestId": 12})
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullRequests/12/labels", func(http.ResponseWriter, *http.Request) {
+		t.Error("labels must not be touched when the mirror does not own them")
 	})
 
 	p, _ := newPATProvider(t, mux)
@@ -377,5 +380,65 @@ func TestPullRequestErrorsDoNotLeakTheToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "pat-test-token") {
 		t.Errorf("error must not leak the token: %v", err)
+	}
+}
+
+func TestLabelsAreReconciledNotOnlyAdded(t *testing.T) {
+	var added []string
+	var removed []string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullrequests/12", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"pullRequestId": 12})
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullRequests/12/labels", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, map[string]any{"value": []map[string]any{{"name": "stale"}, {"name": "keep"}}})
+		case http.MethodPost:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			added = append(added, body["name"].(string))
+			writeJSON(w, body)
+		}
+	})
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullRequests/12/labels/stale", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			removed = append(removed, "stale")
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	p, _ := newPATProvider(t, mux)
+	err := p.UpdatePullRequest(context.Background(), "widget", 12, vcs.PullRequestSpec{
+		Title: "Add login", BaseBranch: "main",
+		Labels: []string{"keep", "new"}, SyncLabels: true,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if len(added) != 1 || added[0] != "new" {
+		t.Errorf("added = %v, want only the missing one", added)
+	}
+	if len(removed) != 1 || removed[0] != "stale" {
+		t.Errorf("removed = %v, want the label the source dropped", removed)
+	}
+}
+
+func TestTruncationCountsCharactersNotBytes(t *testing.T) {
+	// 3000 CJK characters is well under the 4000 character limit but far
+	// over it in bytes.
+	body := strings.Repeat("字", 3000)
+	if got := truncateDescription(body); got != body {
+		t.Fatalf("a 3000 character body was truncated: %d runes in, %d out", 3000, len([]rune(got)))
+	}
+
+	long := strings.Repeat("字", 5000)
+	got := truncateDescription(long)
+	if n := len([]rune(got)); n > 4000 {
+		t.Errorf("truncated to %d characters, over the limit", n)
+	}
+	if strings.ContainsRune(got, '�') {
+		t.Error("truncation cut through a multi byte rune")
 	}
 }

@@ -92,8 +92,14 @@ func mergeRequestState(a apiMergeRequest) vcs.PRState {
 	switch a.State {
 	case "merged":
 		return vcs.PRMerged
-	case "closed", "locked":
+	case "closed":
 		return vcs.PRClosed
+	case "locked":
+		// Transient: a merge request sits in locked while a merge is in
+		// flight. Reading it as closed would close the destination and post
+		// "closed without merging" moments before it becomes merged, and
+		// nothing would ever correct that note.
+		return vcs.PROpen
 	default:
 		return vcs.PROpen
 	}
@@ -194,9 +200,13 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 		"description":   spec.Body,
 		"target_branch": spec.BaseBranch,
 	}
-	// An empty labels string clears them, which is right: the source is the
-	// authority, so a label removed there is removed here.
-	payload["labels"] = strings.Join(spec.Labels, ",")
+	// An empty labels string clears them, which is right when the mirror
+	// owns labels: a label removed at the source is removed here. With
+	// label mirroring off, the field is omitted so labels somebody added at
+	// the destination survive.
+	if spec.SyncLabels {
+		payload["labels"] = strings.Join(spec.Labels, ",")
+	}
 
 	_, _, err := p.do(ctx, http.MethodPut,
 		fmt.Sprintf("%s/api/v4/projects/%s/merge_requests/%d", p.base, p.projectRef(repoPath), number), payload)
@@ -319,7 +329,10 @@ func (p *Provider) ListReviewComments(ctx context.Context, repoPath string, numb
 			CommitSHA: n.Position.HeadSHA,
 			BaseSHA:   n.Position.BaseSHA,
 		}
-		if rc.Path == "" {
+		// A comment on a deleted line reports new_line as null and old_line
+		// as set. new_path is populated on both sides of a text diff, so it
+		// cannot be used to tell them apart.
+		if n.Position.NewLine == 0 && n.Position.OldLine != 0 {
 			rc.Path = n.Position.OldPath
 			rc.Line = n.Position.OldLine
 			rc.Side = "LEFT"

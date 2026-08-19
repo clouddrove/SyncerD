@@ -391,18 +391,101 @@ func TestListReviewsReadsApprovalsAtTheCurrentRevision(t *testing.T) {
 	}
 }
 
-func TestListReviewsIsQuietWhenApprovalRulesAreAbsent(t *testing.T) {
+func TestListReviewsSurfacesErrorsRatherThanReportingNoReviews(t *testing.T) {
 	f := prFake()
 	f.approvalFn = func(context.Context, *codecommit.GetPullRequestApprovalStatesInput) (*codecommit.GetPullRequestApprovalStatesOutput, error) {
-		return nil, errors.New("PullRequestApprovalRulesNotConfigured")
+		return nil, errors.New("ThrottlingException")
+	}
+
+	p := newProvider(t, f)
+	// Answering "no reviews" on a failed call would be a lie with teeth:
+	// the caller deletes mirrored comments it no longer sees at the source,
+	// so a throttled call would delete every mirrored verdict.
+	if _, err := p.ListReviews(context.Background(), "widget", 7); err == nil {
+		t.Fatal("a failed approval lookup must be an error, not an empty result")
+	}
+}
+
+func TestListReviewsIsEmptyWhenNobodyHasApproved(t *testing.T) {
+	f := prFake()
+	f.approvalFn = func(context.Context, *codecommit.GetPullRequestApprovalStatesInput) (*codecommit.GetPullRequestApprovalStatesOutput, error) {
+		return &codecommit.GetPullRequestApprovalStatesOutput{}, nil
 	}
 
 	p := newProvider(t, f)
 	got, err := p.ListReviews(context.Background(), "widget", 7)
 	if err != nil {
-		t.Fatalf("approval rules are optional; their absence must not fail the conversation: %v", err)
+		t.Fatalf("list reviews: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("got = %+v, want none", got)
+	}
+}
+
+func TestFindPullRequestLooksAtClosedPullRequestsToo(t *testing.T) {
+	f := &fakeAPI{}
+	f.listPRFn = func(_ context.Context, in *codecommit.ListPullRequestsInput) (*codecommit.ListPullRequestsOutput, error) {
+		if in.PullRequestStatus == types.PullRequestStatusEnumClosed {
+			return &codecommit.ListPullRequestsOutput{PullRequestIds: []string{"9"}}, nil
+		}
+		return &codecommit.ListPullRequestsOutput{}, nil
+	}
+	f.getPRFn = func(context.Context, *codecommit.GetPullRequestInput) (*codecommit.GetPullRequestOutput, error) {
+		return &codecommit.GetPullRequestOutput{PullRequest: &types.PullRequest{
+			PullRequestId:     aws.String("9"),
+			PullRequestStatus: types.PullRequestStatusEnumClosed,
+			PullRequestTargets: []types.PullRequestTarget{{
+				RepositoryName:  aws.String("widget"),
+				SourceReference: aws.String("refs/heads/syncerd/pr/7"),
+			}},
+		}}, nil
+	}
+
+	p := newProvider(t, f)
+	// A destination pull request somebody closed must still be findable, or
+	// a lost state file creates a second one for the same branch.
+	got, ok, err := p.FindPullRequest(context.Background(), "widget", "syncerd/pr/7")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if !ok || got.Number != 9 || got.State != vcs.PRClosed {
+		t.Fatalf("find = %+v, %v", got, ok)
+	}
+}
+
+func TestListingRefreshesRatherThanServingAStaleRun(t *testing.T) {
+	f := prFake()
+	p := newProvider(t, f)
+
+	if _, err := p.ListPullRequests(context.Background(), "widget", vcs.PRListOptions{}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	first := f.listPRCalls
+
+	// A provider is built once and reused for every cron tick, so a second
+	// run must not be served the first run's snapshot.
+	if _, err := p.ListPullRequests(context.Background(), "widget", vcs.PRListOptions{}); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if f.listPRCalls == first {
+		t.Fatal("a second listing must re-enumerate; the cache outlives the run")
+	}
+}
+
+func TestATransientErrorDoesNotPermanentlyDowngradeAnAnchor(t *testing.T) {
+	f := prFake()
+	f.postFn = func(context.Context, *codecommit.PostCommentForPullRequestInput) (*codecommit.PostCommentForPullRequestOutput, error) {
+		return nil, errors.New("ThrottlingException: Rate exceeded")
+	}
+
+	p := newProvider(t, f)
+	_, err := p.CreateReviewComment(context.Background(), "widget", 7, vcs.ReviewComment{
+		Comment: vcs.Comment{Body: "nit"}, Path: "internal/app.go", Line: 42,
+	})
+	if errors.Is(err, vcs.ErrAnchorRejected) {
+		t.Fatal("throttling is not a rejected anchor: downgrading is permanent, so it must not happen on a transient failure")
+	}
+	if err == nil {
+		t.Fatal("expected an error")
 	}
 }

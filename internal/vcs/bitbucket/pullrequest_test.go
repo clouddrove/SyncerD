@@ -340,3 +340,24 @@ func TestPullRequestErrorsDoNotLeakTheToken(t *testing.T) {
 		t.Errorf("error must not leak the token: %v", err)
 	}
 }
+
+func TestUpdateCarriesTheDraftFlag(t *testing.T) {
+	var payload map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repositories/acme/widget/pullrequests/12", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		writeJSON(w, map[string]any{"id": 12})
+	})
+
+	p, _ := newProvider(t, mux)
+	if err := p.UpdatePullRequest(context.Background(), "acme/widget", 12, vcs.PullRequestSpec{
+		Title: "Add login", BaseBranch: "main", Draft: false,
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	// Omitting it would leave a pull request a draft at the destination
+	// after it left draft at the source.
+	if _, ok := payload["draft"]; !ok {
+		t.Errorf("draft must be sent on update: %+v", payload)
+	}
+}

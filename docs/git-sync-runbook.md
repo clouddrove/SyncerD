@@ -681,6 +681,7 @@ are lost. This table is the whole of it:
 |---|---|---|---|---|---|
 | Reopen a closed mirror | yes | yes | **no** | yes | **no** |
 | Draft | yes | via a `Draft:` title prefix | yes | on create only | **no** |
+| Update watermark | yes | yes | yes | **none reported, so every run reconciles** | yes |
 | Labels | yes | yes | **no** | yes | **no** |
 | Inline comment anchors | yes | needs the source to report commit SHAs | yes | yes | yes |
 | Comment deletion | removed | removed | removed | **tombstone** | **content blanked** |
@@ -691,8 +692,10 @@ skipped, never faked:
 - **Reopen.** Bitbucket has no reopen endpoint and CodeCommit permits only
   `OPEN` to `CLOSED`. A destination pull request closed by hand while its
   source is still open stays closed, and SyncerD warns once and records the
-  divergence rather than opening a second pull request for the same work or
-  retrying forever.
+  divergence rather than opening a second pull request for the same work.
+  Nothing else is attempted on it, because both providers reject an update
+  to a closed pull request. Reopen it by hand and the next run picks it up
+  again: the recorded divergence is re-checked, never trusted.
 - **Draft.** GitLab has no draft field, so a draft is expressed by prefixing
   the title with `Draft:`, and the prefix is stripped when the source leaves
   draft. This is the one place SyncerD does not copy a title verbatim.
@@ -706,10 +709,17 @@ skipped, never faked:
   deleted at the source leaves a tombstone or an empty comment rather than
   disappearing.
 
-CodeCommit is also the expensive one: its API returns pull request ids
-only, so each listing costs one extra call per pull request, and it cannot
-search by branch at all, so SyncerD enumerates once per repository per run
-and matches locally.
+CodeCommit is also the expensive one: its API returns pull request ids only,
+so each listing costs one extra call per pull request, and it cannot search
+by branch at all, so SyncerD enumerates once per repository per run and
+matches locally. A lookup that misses among the open pull requests
+enumerates the closed ones too, which is what stops a lost state file from
+producing a duplicate.
+
+Azure DevOps reports no update timestamp on a pull request, so there is
+nothing to watermark against and every pull request is reconciled on every
+run. That is slower than the other four and it is the only way to notice an
+edit there at all.
 
 **Read this before enabling it.** A fork pull request head is code written by
 anyone who can open a pull request against the source. Turning this on pushes

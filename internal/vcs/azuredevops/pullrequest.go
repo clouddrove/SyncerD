@@ -77,11 +77,13 @@ func (a apiPullRequest) toPullRequest() vcs.PullRequest {
 		CreatedAt:  a.CreationDate,
 		ClosedAt:   a.ClosedDate,
 	}
-	// Azure DevOps reports no separate updated timestamp on a pull request,
-	// so the creation date stands in. The watermark then only skips a pull
-	// request whose destination state already agrees, which is correct if
-	// less efficient than on the providers that do report it.
-	pr.UpdatedAt = a.CreationDate
+	// UpdatedAt is deliberately left zero. Azure DevOps reports no update
+	// timestamp on a pull request, and standing the creation date in for
+	// one would be worse than reporting nothing: the creation date never
+	// changes, so the engine's watermark would skip the pull request
+	// forever after the first run and no later edit, comment, or verdict
+	// would ever be mirrored. A zero time tells the engine there is no
+	// watermark to use, and it reconciles every run instead.
 	if a.LastMergeSHA != nil {
 		pr.HeadSHA = a.LastMergeSHA.CommitID
 	}
@@ -224,12 +226,74 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 		return err
 	}
 
-	for _, label := range spec.Labels {
-		if err := p.addLabel(ctx, repoPath, number, label); err != nil {
-			return fmt.Errorf("azuredevops: pull request %d updated but label %q failed: %w", number, label, err)
+	if spec.SyncLabels {
+		if err := p.reconcileLabels(ctx, repoPath, number, spec.Labels); err != nil {
+			return fmt.Errorf("azuredevops: pull request %d updated but labels failed: %w", number, err)
 		}
 	}
 	return nil
+}
+
+// reconcileLabels makes the destination labels match the source exactly.
+//
+// Adding without removing would leave a label deleted at the source in
+// place at the destination forever, which contradicts the rule that the
+// source is the authority. Re-adding a label that is already there is also
+// avoided: it is a wasted call per label per run, and its failure would
+// fail the whole pull request.
+func (p *Provider) reconcileLabels(ctx context.Context, repoPath string, number int, want []string) error {
+	current, err := p.listLabels(ctx, repoPath, number)
+	if err != nil {
+		return err
+	}
+
+	wanted := make(map[string]bool, len(want))
+	for _, l := range want {
+		wanted[l] = true
+		if !current[l] {
+			if err := p.addLabel(ctx, repoPath, number, l); err != nil {
+				return err
+			}
+		}
+	}
+	for l := range current {
+		if !wanted[l] {
+			if err := p.removeLabel(ctx, repoPath, number, l); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// listLabels reports the labels currently on a pull request.
+func (p *Provider) listLabels(ctx context.Context, repoPath string, number int) (map[string]bool, error) {
+	body, _, err := p.do(ctx, http.MethodGet,
+		p.prURL(repoPath, prChildRoute, strconv.Itoa(number)+"/labels"), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Value []struct {
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("azuredevops: decode labels: %w", err)
+	}
+	out := make(map[string]bool, len(resp.Value))
+	for _, l := range resp.Value {
+		out[l.Name] = true
+	}
+	return out, nil
+}
+
+// removeLabel detaches a label. This removes the assignment, not the tag
+// definition, which other pull requests may still use.
+func (p *Provider) removeLabel(ctx context.Context, repoPath string, number int, name string) error {
+	_, _, err := p.do(ctx, http.MethodDelete,
+		p.prURL(repoPath, prChildRoute, strconv.Itoa(number)+"/labels/"+url.PathEscape(name)), nil)
+	return err
 }
 
 // truncateDescription keeps a body inside the documented 4000 character
@@ -238,11 +302,17 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 // sit at the top, so what is cut is the tail of the original text.
 func truncateDescription(body string) string {
 	const limit = 4000
-	if len(body) <= limit {
+	const notice = "\n\n[truncated by SyncerD: Azure DevOps limits a description to 4000 characters]"
+
+	// The limit counts characters, not bytes, and slicing a string by byte
+	// offset would both cut a mirrored body far short of the real limit and
+	// risk splitting a multi byte rune.
+	runes := []rune(body)
+	if len(runes) <= limit {
 		return body
 	}
-	const notice = "\n\n[truncated by SyncerD: Azure DevOps limits a description to 4000 characters]"
-	return body[:limit-len(notice)] + notice
+	keep := limit - len([]rune(notice))
+	return string(runes[:keep]) + notice
 }
 
 // ClosePullRequest abandons a pull request, which is Azure DevOps' close.

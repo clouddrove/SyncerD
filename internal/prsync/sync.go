@@ -132,6 +132,7 @@ func syncOne(ctx context.Context, pr vcs.PullRequest, opts Options, res *Result)
 	}
 	if opts.Labels {
 		spec.Labels = pr.Labels
+		spec.SyncLabels = true
 	}
 
 	switch {

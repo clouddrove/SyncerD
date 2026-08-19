@@ -95,7 +95,10 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 		return err
 	}
 
-	if len(spec.Labels) > 0 {
+	// PUT replaces the whole set, so a label removed at the source is
+	// removed here. It runs only when the mirror owns labels; otherwise a
+	// label somebody added at the destination would be wiped.
+	if spec.SyncLabels {
 		if err := p.setLabels(ctx, repoPath, number, spec.Labels); err != nil {
 			return fmt.Errorf("github: pull request %d updated but labels failed: %w", number, err)
 		}

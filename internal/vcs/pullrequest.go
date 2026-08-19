@@ -155,6 +155,14 @@ type PullRequestSpec struct {
 	BaseBranch string
 	Draft      bool
 	Labels     []string
+
+	// SyncLabels reports whether Labels is authoritative. It distinguishes
+	// "the source has no labels", where a destination label should be
+	// removed, from "label mirroring is switched off", where a label
+	// somebody added at the destination must be left alone. Labels alone
+	// cannot express that difference, and guessing it wrong deletes other
+	// people's work.
+	SyncLabels bool
 }
 
 // PullRequestWriter creates and maintains pull requests at a destination.

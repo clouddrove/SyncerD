@@ -373,3 +373,63 @@ func TestPullRequestErrorsDoNotLeakTheToken(t *testing.T) {
 		t.Errorf("error must not leak the token: %v", err)
 	}
 }
+
+func TestReviewCommentOnADeletedLineIsLeftSide(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/acme%2Fwidget/merge_requests/7/notes", func(w http.ResponseWriter, r *http.Request) {
+		// GitLab populates new_path on both sides of a text diff; only the
+		// null new_line tells you the comment sits on a deleted line.
+		writeJSON(w, []map[string]any{{
+			"id": 3, "body": "was wrong", "author": map[string]any{"username": "rev"},
+			"position": map[string]any{
+				"new_path": "internal/app.go", "old_path": "internal/app.go",
+				"old_line": 17, "head_sha": "h", "base_sha": "b",
+			},
+		}})
+	})
+
+	p := newProvider(t, mux)
+	got, err := p.ListReviewComments(context.Background(), "acme/widget", 7)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d, want 1", len(got))
+	}
+	if got[0].Side != "LEFT" || got[0].Line != 17 {
+		t.Errorf("a deleted line comment must anchor LEFT at its old line, got %+v", got[0])
+	}
+}
+
+func TestLockedIsTreatedAsOpen(t *testing.T) {
+	// locked is the transient state during a merge, not a terminal one.
+	// Reading it as closed would close the destination and post "closed
+	// without merging" moments before the source became merged.
+	if got := mergeRequestState(apiMergeRequest{State: "locked"}); got != vcs.PROpen {
+		t.Errorf("locked = %q, want open", got)
+	}
+	if got := mergeRequestState(apiMergeRequest{State: "closed"}); got != vcs.PRClosed {
+		t.Errorf("closed = %q", got)
+	}
+}
+
+func TestLabelsAreOmittedWhenTheMirrorDoesNotOwnThem(t *testing.T) {
+	var payload map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/acme%2Fwidget/merge_requests/12", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		writeJSON(w, map[string]any{"iid": 12})
+	})
+
+	p := newProvider(t, mux)
+	if err := p.UpdatePullRequest(context.Background(), "acme/widget", 12, vcs.PullRequestSpec{
+		Title: "Add login", BaseBranch: "main",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	// Sending an empty string would clear labels somebody added at the
+	// destination.
+	if _, ok := payload["labels"]; ok {
+		t.Errorf("labels must not be sent when SyncLabels is false: %+v", payload)
+	}
+}

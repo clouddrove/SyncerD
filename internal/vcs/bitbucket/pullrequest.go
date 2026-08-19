@@ -130,7 +130,7 @@ func (p *Provider) ListPullRequests(ctx context.Context, repoPath string, opts v
 // generic query language instead.
 func (p *Provider) FindPullRequest(ctx context.Context, repoPath, headBranch string) (vcs.PullRequest, bool, error) {
 	q := url.QueryEscape(fmt.Sprintf(`source.branch.name="%s"`, headBranch))
-	endpoint := fmt.Sprintf("%s/repositories/%s/pullrequests?state=OPEN&state=MERGED&state=DECLINED&pagelen=50&q=%s",
+	endpoint := fmt.Sprintf("%s/repositories/%s/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED&pagelen=50&q=%s",
 		p.apiURL, repoPath, q)
 
 	found, err := p.listPullRequests(ctx, endpoint)
@@ -205,6 +205,7 @@ func (p *Provider) UpdatePullRequest(ctx context.Context, repoPath string, numbe
 	payload := map[string]any{
 		"title":       spec.Title,
 		"description": spec.Body,
+		"draft":       spec.Draft,
 		"destination": map[string]any{"branch": map[string]any{"name": spec.BaseBranch}},
 	}
 	_, _, err := p.do(ctx, http.MethodPut,

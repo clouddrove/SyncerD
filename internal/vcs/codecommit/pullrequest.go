@@ -2,6 +2,7 @@ package codecommit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,44 +11,62 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	"github.com/aws/aws-sdk-go-v2/service/codecommit/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/clouddrove/syncerd/internal/vcs"
 )
 
-// prCache holds one repository's enumerated pull requests for the length of
-// a run.
+// prCache holds one repository's enumerated pull requests so a listing and
+// the finds that follow it share a single pass.
 //
 // CodeCommit's ListPullRequests returns ids only, so every listing costs a
 // GetPullRequest per id, and there is no way at all to search by source
 // branch. FindPullRequest therefore has to enumerate and match client side.
-// Without this cache, a repository with N open pull requests would cost
-// N GetPullRequest calls for the listing and another N for every single
-// find. The cache is per provider, which is per run.
+// Without this, a repository with N open pull requests would cost N extra
+// calls for the listing and another N for every single find.
+//
+// The cache is NOT per run. A provider is built once by BuildMirrors and
+// reused for every tick of the cron schedule, so anything cached here
+// outlives the run that filled it. ListPullRequests therefore always
+// re-enumerates and replaces the entry, and only FindPullRequest reads it.
+// That gives one enumeration per repository per run, and no staleness
+// across runs.
 type prCache struct {
-	mu     sync.Mutex
-	byRepo map[string][]vcs.PullRequest
+	mu sync.Mutex
+	// key is repository plus status, so the open listing and the closed
+	// one, which only a failed find needs, are kept apart.
+	byKey map[string][]vcs.PullRequest
 }
 
-func (c *prCache) get(repo string) ([]vcs.PullRequest, bool) {
+func cacheKey(repo string, status types.PullRequestStatusEnum) string {
+	return repo + "\x00" + string(status)
+}
+
+func (c *prCache) get(repo string, status types.PullRequestStatusEnum) ([]vcs.PullRequest, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	prs, ok := c.byRepo[repo]
+	prs, ok := c.byKey[cacheKey(repo, status)]
 	return prs, ok
 }
 
-func (c *prCache) put(repo string, prs []vcs.PullRequest) {
+func (c *prCache) put(repo string, status types.PullRequestStatusEnum, prs []vcs.PullRequest) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.byRepo == nil {
-		c.byRepo = make(map[string][]vcs.PullRequest)
+	if c.byKey == nil {
+		c.byKey = make(map[string][]vcs.PullRequest)
 	}
-	c.byRepo[repo] = prs
+	c.byKey[cacheKey(repo, status)] = prs
 }
 
+// invalidate drops everything cached for a repository, in both statuses.
 func (c *prCache) invalidate(repo string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.byRepo, repo)
+	for _, status := range []types.PullRequestStatusEnum{
+		types.PullRequestStatusEnumOpen, types.PullRequestStatusEnumClosed,
+	} {
+		delete(c.byKey, cacheKey(repo, status))
+	}
 }
 
 // toPullRequest converts the SDK representation to the neutral model.
@@ -116,7 +135,11 @@ func (p *Provider) ListPullRequests(ctx context.Context, repoPath string, opts v
 			return nil, fmt.Errorf("codecommit: listing %s pull requests is not supported", s)
 		}
 	}
-	return p.enumerate(ctx, repoPath)
+	// Always a fresh enumeration: this is the call the engine makes once per
+	// repository per run, and the provider outlives the run. It also drops
+	// any closed listing cached during the previous run.
+	p.prs.invalidate(repoPath)
+	return p.enumerate(ctx, repoPath, types.PullRequestStatusEnumOpen)
 }
 
 // FindPullRequest locates a pull request by its source branch.
@@ -124,13 +147,21 @@ func (p *Provider) ListPullRequests(ctx context.Context, repoPath string, opts v
 // CodeCommit has no source branch filter, so this matches client side over
 // the enumeration, which is shared with ListPullRequests for the run.
 func (p *Provider) FindPullRequest(ctx context.Context, repoPath, headBranch string) (vcs.PullRequest, bool, error) {
-	prs, err := p.enumerate(ctx, repoPath)
-	if err != nil {
-		return vcs.PullRequest{}, false, err
-	}
-	for _, pr := range prs {
-		if pr.HeadBranch == headBranch {
-			return pr, true, nil
+	// Open first, which is both the common case and already enumerated by
+	// the listing this run made. Closed only if that misses: a destination
+	// pull request somebody closed still has to be found, or a lost state
+	// file would create a second one for the same branch.
+	for _, status := range []types.PullRequestStatusEnum{
+		types.PullRequestStatusEnumOpen, types.PullRequestStatusEnumClosed,
+	} {
+		prs, err := p.enumerate(ctx, repoPath, status)
+		if err != nil {
+			return vcs.PullRequest{}, false, err
+		}
+		for _, pr := range prs {
+			if pr.HeadBranch == headBranch {
+				return pr, true, nil
+			}
 		}
 	}
 	return vcs.PullRequest{}, false, nil
@@ -138,8 +169,8 @@ func (p *Provider) FindPullRequest(ctx context.Context, repoPath, headBranch str
 
 // enumerate lists the open pull request ids and fetches each one, caching
 // the result for the rest of the run.
-func (p *Provider) enumerate(ctx context.Context, repoPath string) ([]vcs.PullRequest, error) {
-	if prs, ok := p.prs.get(repoPath); ok {
+func (p *Provider) enumerate(ctx context.Context, repoPath string, status types.PullRequestStatusEnum) ([]vcs.PullRequest, error) {
+	if prs, ok := p.prs.get(repoPath, status); ok {
 		return prs, nil
 	}
 
@@ -158,7 +189,7 @@ func (p *Provider) enumerate(ctx context.Context, repoPath string) ([]vcs.PullRe
 		}
 		out, lerr := c.ListPullRequests(ctx, &codecommit.ListPullRequestsInput{
 			RepositoryName:    aws.String(repoPath),
-			PullRequestStatus: types.PullRequestStatusEnumOpen,
+			PullRequestStatus: status,
 			NextToken:         token,
 		})
 		if lerr != nil {
@@ -188,7 +219,7 @@ func (p *Provider) enumerate(ctx context.Context, repoPath string) ([]vcs.PullRe
 		prs = append(prs, toPullRequest(got.PullRequest, repoPath))
 	}
 
-	p.prs.put(repoPath, prs)
+	p.prs.put(repoPath, status, prs)
 	return prs, nil
 }
 
@@ -355,8 +386,15 @@ func (p *Provider) ListReviews(ctx context.Context, repoPath string, number int)
 	got, gerr := c.GetPullRequest(ctx, &codecommit.GetPullRequestInput{
 		PullRequestId: aws.String(strconv.Itoa(number)),
 	})
-	if gerr != nil || got.PullRequest == nil {
-		return nil, nil
+	if gerr != nil {
+		// Reporting "no reviews" here would be a lie with teeth: the caller
+		// deletes every mirrored comment it no longer sees at the source,
+		// so swallowing this would delete the mirrored verdicts on any
+		// throttled or unauthorised call.
+		return nil, fmt.Errorf("codecommit: get pull request %d for approvals: %w", number, gerr)
+	}
+	if got.PullRequest == nil {
+		return nil, fmt.Errorf("codecommit: pull request %d not found", number)
 	}
 
 	out, err := c.GetPullRequestApprovalStates(ctx, &codecommit.GetPullRequestApprovalStatesInput{
@@ -364,11 +402,7 @@ func (p *Provider) ListReviews(ctx context.Context, repoPath string, number int)
 		RevisionId:    got.PullRequest.RevisionId,
 	})
 	if err != nil {
-		// Approval rules are optional in CodeCommit, and a repository
-		// without them answers with an error rather than an empty list.
-		// Verdicts are a bonus on this provider, not a reason to fail the
-		// whole conversation.
-		return nil, nil
+		return nil, fmt.Errorf("codecommit: get approval states for pull request %d: %w", number, err)
 	}
 
 	reviews := make([]vcs.Review, 0, len(out.Approvals))
@@ -486,7 +520,7 @@ func (p *Provider) postComment(ctx context.Context, repoPath string, number int,
 		Location:       location,
 	})
 	if err != nil {
-		if location != nil {
+		if location != nil && isLocationError(err) {
 			// A location CodeCommit will not place is a rejected anchor,
 			// which the caller downgrades rather than failing on.
 			return "", fmt.Errorf("%w: %s", vcs.ErrAnchorRejected, err)
@@ -497,6 +531,47 @@ func (p *Provider) postComment(ctx context.Context, repoPath string, number int,
 		return "", fmt.Errorf("codecommit: post comment returned no comment")
 	}
 	return aws.ToString(out.Comment.CommentId), nil
+}
+
+// locationErrors are the CodeCommit errors that mean "this anchor cannot be
+// placed" rather than "this call failed".
+//
+// The distinction matters: a downgrade is permanent, since the discussion
+// comment it falls back to is recorded in state and never retried as an
+// anchored comment. Treating throttling or an expired credential as a
+// rejected anchor would silently and permanently lose the anchor over a
+// transient failure.
+var locationErrors = []string{
+	"InvalidFileLocationException",
+	"InvalidFilePositionException",
+	"InvalidRelativeFileVersionEnumException",
+	"PathDoesNotExistException",
+	"PathRequiredException",
+	"BeforeCommitIdAndAfterCommitIdAreSameException",
+	"CommitDoesNotExistException",
+}
+
+// isLocationError reports whether err is about the anchor rather than the
+// request.
+func isLocationError(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		for _, name := range locationErrors {
+			if apiErr.ErrorCode() == name {
+				return true
+			}
+		}
+		return false
+	}
+	// Not a modelled API error. Fall back to the text, which is what a
+	// wrapped or faked error carries.
+	msg := err.Error()
+	for _, name := range locationErrors {
+		if strings.Contains(msg, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // commitRange reports the before and after commit ids a comment must carry.

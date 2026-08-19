@@ -56,6 +56,9 @@ func TestListReviewCommentsCarriesTheAnchor(t *testing.T) {
 			"in_reply_to_id": 4,
 		}})
 	})
+	mux.HandleFunc("/repos/acme/widget/pulls/7", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"number": 7, "base": map[string]any{"sha": "base123"}})
+	})
 
 	p, _ := newProvider(t, mux)
 	got, err := p.ListReviewComments(context.Background(), "acme/widget", 7)
@@ -71,6 +74,29 @@ func TestListReviewCommentsCarriesTheAnchor(t *testing.T) {
 	}
 	if rc.InReplyTo != "4" {
 		t.Errorf("InReplyTo = %q, want 4", rc.InReplyTo)
+	}
+	// GitLab and CodeCommit cannot anchor a comment without it.
+	if rc.BaseSHA != "base123" {
+		t.Errorf("BaseSHA = %q, want base123", rc.BaseSHA)
+	}
+}
+
+func TestListReviewCommentsSkipsTheBaseLookupWhenThereAreNone(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/pulls/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]any{})
+	})
+	mux.HandleFunc("/repos/acme/widget/pulls/7", func(http.ResponseWriter, *http.Request) {
+		t.Error("no inline comments means no reason to read the pull request")
+	})
+
+	p, _ := newProvider(t, mux)
+	got, err := p.ListReviewComments(context.Background(), "acme/widget", 7)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got = %+v", got)
 	}
 }
 
