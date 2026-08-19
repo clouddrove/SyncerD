@@ -442,3 +442,31 @@ func TestTruncationCountsCharactersNotBytes(t *testing.T) {
 		t.Error("truncation cut through a multi byte rune")
 	}
 }
+
+func TestQualifiedPathIsReducedToTheRepositorySegment(t *testing.T) {
+	// ListRepos reports project/name, and every URL already carries the
+	// project as its own segment. Interpolating the qualified path whole
+	// produced .../acme-proj/_apis/git/repositories/acme-proj%2Fwidget/...
+	// and 404ed on every repository.
+	var gotPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/acme-org/acme-proj/_apis/git/repositories/widget/pullrequests", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(w, map[string]any{"value": []map[string]any{}})
+	})
+
+	p, _ := newPATProvider(t, mux)
+	if _, err := p.ListPullRequests(context.Background(), "acme-proj/widget", vcs.PRListOptions{}); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if gotPath == "" {
+		t.Fatal("the request never reached the un-duplicated route")
+	}
+}
+
+func TestQualifiedPathMatchesWhatListReposReports(t *testing.T) {
+	p, _ := newPATProvider(t, http.NewServeMux())
+	if got := p.QualifiedPath("widget"); got != "acme-proj/widget" {
+		t.Errorf("QualifiedPath = %q, want acme-proj/widget", got)
+	}
+}

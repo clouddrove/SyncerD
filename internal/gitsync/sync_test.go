@@ -20,6 +20,10 @@ type fakeRemote struct {
 }
 
 func (f *fakeRemote) CloneURL(path string) string { return filepath.Join(f.base, path+".git") }
+
+// QualifiedPath mirrors what a real provider does: the rendered name is
+// owner relative, and the qualified form is what an API addresses.
+func (f *fakeRemote) QualifiedPath(name string) string { return "acme/" + name }
 func (f *fakeRemote) GitCredential(context.Context) (vcs.GitCredential, error) {
 	return vcs.GitCredential{}, nil
 }
@@ -697,5 +701,143 @@ func TestWithoutMirrorObjectsASameRepoPullRequestStillGetsNoBranch(t *testing.T)
 	}
 	if rep.Mirrored[0].PRBranchesPushed != 0 {
 		t.Errorf("PRBranchesPushed = %d, want 0", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+// recordingWriter captures the repository path the engine hands the pull
+// request writer, which is the value every destination API interpolates.
+type recordingWriter struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (r *recordingWriter) record(p string) {
+	r.mu.Lock()
+	r.paths = append(r.paths, p)
+	r.mu.Unlock()
+}
+
+func (r *recordingWriter) FindPullRequest(_ context.Context, repo, _ string) (vcs.PullRequest, bool, error) {
+	r.record(repo)
+	return vcs.PullRequest{}, false, nil
+}
+func (r *recordingWriter) CreatePullRequest(_ context.Context, repo string, spec vcs.PullRequestSpec) (vcs.PullRequest, error) {
+	r.record(repo)
+	return vcs.PullRequest{Number: 100, State: vcs.PROpen, HeadBranch: spec.HeadBranch}, nil
+}
+func (r *recordingWriter) UpdatePullRequest(_ context.Context, repo string, _ int, _ vcs.PullRequestSpec) error {
+	r.record(repo)
+	return nil
+}
+func (r *recordingWriter) ClosePullRequest(_ context.Context, repo string, _ int) error {
+	r.record(repo)
+	return nil
+}
+
+func TestDestinationPullRequestsUseTheQualifiedRepositoryPath(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+
+	writer := &recordingWriter{}
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha, BaseBranch: "main",
+	}}})
+	m.PullRequests.MirrorObjects = true
+	m.DestPRs = writer
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if len(writer.paths) == 0 {
+		t.Fatal("the writer was never called")
+	}
+
+	// The rendered destination name is owner relative because CloneURL and
+	// EnsureRepo prepend the owner themselves. Handing that bare name to an
+	// API that wants a full path produced "/repos/app/pulls" and 404ed on
+	// every repository.
+	for _, got := range writer.paths {
+		if got != "acme/app" {
+			t.Errorf("writer received %q, want the qualified path acme/app", got)
+		}
+	}
+}
+
+// failingWriter fails every create, standing in for a destination that
+// rejects the pull request pass while the branches mirror fine.
+type failingWriter struct{}
+
+func (failingWriter) FindPullRequest(context.Context, string, string) (vcs.PullRequest, bool, error) {
+	return vcs.PullRequest{}, false, nil
+}
+func (failingWriter) CreatePullRequest(context.Context, string, vcs.PullRequestSpec) (vcs.PullRequest, error) {
+	return vcs.PullRequest{}, errors.New("403 forbidden")
+}
+func (failingWriter) UpdatePullRequest(context.Context, string, int, vcs.PullRequestSpec) error {
+	return nil
+}
+func (failingWriter) ClosePullRequest(context.Context, string, int) error { return nil }
+
+func TestAFailedPullRequestPassIsRetriedOnTheNextRun(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha, BaseBranch: "main",
+	}}})
+	m.PullRequests.MirrorObjects = true
+	m.DestPRs = failingWriter{}
+
+	rep, _ := eng.Run(context.Background(), []Mirror{m})
+	if len(rep.Failures) != 1 || rep.Failures[0].Stage != "pr-objects" {
+		t.Fatalf("want one pr-objects failure, got %+v", rep.Failures)
+	}
+
+	// The fingerprint is the claim that the repository is fully mirrored.
+	// Recording it here would skip the repository next run and the failure
+	// would never be retried until an unrelated ref moved.
+	if _, ok := eng.opts.State.Get("fake", "acme/app"); ok {
+		t.Error("a repository whose pull request pass failed must not be recorded as done")
+	}
+
+	rep, _ = eng.Run(context.Background(), []Mirror{m})
+	if rep.Skipped != 0 {
+		t.Errorf("the repository must be retried, Skipped = %d", rep.Skipped)
+	}
+}
+
+func TestAnUnreachableForkHeadKeepsTheBranchAlreadyAtTheDestination(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+	lister := &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: forkSHA,
+		HeadRepoCloneURL: fork,
+	}}}
+	enablePRs(&m, lister)
+
+	if _, err := eng.Run(context.Background(), []Mirror{m}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if destRef(t, m, "refs/heads/syncerd/pr/7") == "" {
+		t.Fatal("the branch should exist after the first run")
+	}
+
+	// The fork becomes unreachable while the pull request is still open.
+	lister.prs[0].HeadRepoCloneURL = filepath.Join(t.TempDir(), "gone.git")
+
+	if _, err := eng.Run(context.Background(), []Mirror{m}); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if destRef(t, m, "refs/heads/syncerd/pr/7") == "" {
+		t.Error("one failed fetch must not delete a branch the destination already has")
 	}
 }

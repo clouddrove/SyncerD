@@ -561,27 +561,18 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		}
 	}
 
-	if !e.opts.DryRun {
-		e.stateMark(m.Name, repo.Path, destName, fp)
-
-		if setter, ok := m.Dest.(vcs.DefaultBranchSetter); ok && repo.DefaultBranch != "" && created {
-			if err := setter.SetDefaultBranch(ctx, destName, repo.DefaultBranch); err != nil {
-				redacted := e.redact(err.Error())
-				logging.Warn(fmt.Sprintf("mirror %s: could not set default branch on %s: %s", m.Name, destName, redacted),
-					"mirror", m.Name, "destination", destName, "error", redacted)
-			}
-		}
-	}
-
 	// Pull request objects come after the push, because a destination pull
 	// request cannot reference commits that have not arrived yet.
 	var prRes prsync.Result
 	if m.PullRequests.Enabled && m.PullRequests.MirrorObjects && m.DestPRs != nil {
 		var perr error
 		prRes, perr = prsync.Sync(ctx, prs, prsync.Options{
-			Mirror:       m.Name,
-			SourceRepo:   repo.Path,
-			DestRepo:     destName,
+			Mirror:     m.Name,
+			SourceRepo: repo.Path,
+			// Qualified, not the rendered name: the rendered name is owner
+			// relative, and every destination API addresses a repository by
+			// its full path.
+			DestRepo:     m.Dest.QualifiedPath(destName),
 			BranchPrefix: m.PullRequests.BranchPrefix,
 			Source:       m.SourcePRs,
 			Dest:         m.DestPRs,
@@ -602,6 +593,22 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 				Mirror: m.Name, SourceRepo: repo.Path, DestRepo: destName,
 				Stage: "pr-objects", Error: e.redact(perr.Error()),
 			})
+		}
+	}
+
+	// A fingerprint is the claim that this repository is fully mirrored. It
+	// is withheld when the pull request pass failed, because recording it
+	// would skip the repository on the next run and the failure would never
+	// be retried until an unrelated branch or tag happened to move.
+	if !e.opts.DryRun && len(prRes.Failures) == 0 {
+		e.stateMark(m.Name, repo.Path, destName, fp)
+
+		if setter, ok := m.Dest.(vcs.DefaultBranchSetter); ok && repo.DefaultBranch != "" && created {
+			if err := setter.SetDefaultBranch(ctx, destName, repo.DefaultBranch); err != nil {
+				redacted := e.redact(err.Error())
+				logging.Warn(fmt.Sprintf("mirror %s: could not set default branch on %s: %s", m.Name, destName, redacted),
+					"mirror", m.Name, "destination", destName, "error", redacted)
+			}
 		}
 	}
 
@@ -689,9 +696,14 @@ func (e *Engine) syncPRBranches(ctx context.Context, m Mirror, repo vcs.Repo, pr
 			from = srcURL
 		}
 		if err := e.opts.Runner.FetchPRHead(ctx, cacheDir, from, "refs/heads/"+pr.HeadBranch, branch, srcCred); err != nil {
-			logging.Warn(fmt.Sprintf("mirror %s: %s could not fetch the head of pull request %d, skipping it: %s",
+			logging.Warn(fmt.Sprintf("mirror %s: %s could not fetch the head of pull request %d, keeping the copy from the last run: %s",
 				m.Name, repo.Path, pr.Number, e.redact(err.Error())),
 				"mirror", m.Name, "source", repo.Path, "pull_request", pr.Number)
+			// Keep it anyway. The pull request is still open at the source,
+			// so dropping the branch here would prune it from the cache and
+			// then delete it at the destination, pulling the head out from
+			// under a mirrored pull request over one failed fetch.
+			keep[branch] = true
 			continue
 		}
 		keep[branch] = true

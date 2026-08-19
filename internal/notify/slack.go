@@ -128,7 +128,14 @@ func (c *SlackClient) renderBlocks(m Message) []block {
 		}
 		for _, line := range sec.Lines {
 			// Flush into a new section block before exceeding Slack's limit.
-			if buf.Len()+len(line)+1 > maxSectionChars {
+			//
+			// An empty buffer is never flushed: Block Kit requires a
+			// section to carry at least one character, so a single line
+			// longer than the limit would otherwise produce an empty
+			// block, Slack would answer 400 invalid_blocks, and the whole
+			// notification would be dropped. That line is left to
+			// sectionBlock, which truncates it to fit.
+			if buf.Len() > 0 && buf.Len()+len(line)+1 > maxSectionChars {
 				blocks = append(blocks, sectionBlock(buf.String()))
 				buf.Reset()
 			}
@@ -145,8 +152,19 @@ func (c *SlackClient) renderBlocks(m Message) []block {
 	return blocks
 }
 
+// sectionBlock renders one section, bounded at both ends.
+//
+// Block Kit rejects a section whose text is empty and one whose text is
+// over the limit, and both ends are reachable from a single enormous
+// failure line, such as a transport error carrying a multi kilobyte HTML
+// body. Either one makes Slack answer 400 invalid_blocks and the whole
+// notification is lost, which matters most for the failure alert that is
+// the reason the integration exists.
 func sectionBlock(text string) block {
-	return block{Type: "section", Text: &textObject{Type: "mrkdwn", Text: text}}
+	if text == "" {
+		text = "(empty)"
+	}
+	return block{Type: "section", Text: &textObject{Type: "mrkdwn", Text: truncate(text, maxSectionChars)}}
 }
 
 // footerBlock is the constant CloudDrove-branded context footer.
@@ -161,14 +179,21 @@ func footerBlock() block {
 	}
 }
 
+// truncate bounds a string to max characters.
+//
+// Slack counts characters, not bytes, so this works in runes: slicing by
+// byte offset would cut a multi byte rune in half and send a replacement
+// character, and would also trim non-ASCII text far shorter than the limit
+// actually allows.
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
 	if max <= 1 {
-		return s[:max]
+		return string(runes[:max])
 	}
-	return s[:max-1] + "…"
+	return string(runes[:max-1]) + "…"
 }
 
 func (c *SlackClient) send(ctx context.Context, payload slackPayload) error {

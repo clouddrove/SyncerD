@@ -8,10 +8,11 @@ import (
 
 type stubProvider struct{ name string }
 
-func (s *stubProvider) Name() string                { return s.name }
-func (s *stubProvider) Type() string                { return "stub" }
-func (s *stubProvider) CloneURL(path string) string { return "https://stub/" + path }
-func (s *stubProvider) SupportsNesting() bool       { return true }
+func (s *stubProvider) Name() string                     { return s.name }
+func (s *stubProvider) Type() string                     { return "stub" }
+func (s *stubProvider) CloneURL(path string) string      { return "https://stub/" + path }
+func (s *stubProvider) QualifiedPath(name string) string { return "stub/" + name }
+func (s *stubProvider) SupportsNesting() bool            { return true }
 func (s *stubProvider) GitCredential(context.Context) (GitCredential, error) {
 	return GitCredential{}, nil
 }

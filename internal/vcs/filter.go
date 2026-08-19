@@ -12,8 +12,14 @@ type Filter struct {
 
 // Match reports whether r survives the filter. Patterns are globs matched
 // against the repository name. An empty Include list matches everything.
-// Exclude always wins. A malformed pattern never matches, so a typo drops
-// repositories rather than silently mirroring all of them.
+// Exclude always wins.
+//
+// A malformed pattern always drops the repository, on either list. A typo
+// that mirrors nothing is noticed immediately; a typo that mirrors a
+// repository somebody wrote an exclude rule to keep out is noticed by
+// whoever reads the destination. Configuration validation rejects these
+// patterns before a run starts, so this only backstops a caller that did
+// not validate.
 func (f Filter) Match(r Repo) bool {
 	if f.SkipArchived && r.Archived {
 		return false
@@ -22,7 +28,15 @@ func (f Filter) Match(r Repo) bool {
 		return false
 	}
 	for _, pat := range f.Exclude {
-		if ok, err := path.Match(pat, r.Name); err == nil && ok {
+		ok, err := path.Match(pat, r.Name)
+		if err != nil {
+			// A malformed exclude pattern must not quietly mirror the
+			// repository it was written to keep out. Configuration
+			// validation rejects these before a run starts; this is the
+			// backstop, and it errs the safe way.
+			return false
+		}
+		if ok {
 			return false
 		}
 	}

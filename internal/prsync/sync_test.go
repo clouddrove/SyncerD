@@ -641,3 +641,86 @@ func TestASourceWithNoUpdateTimestampIsNeverFrozen(t *testing.T) {
 		t.Error("the edit did not reach the destination")
 	}
 }
+
+func TestAPullRequestThatLeavesTheSourceListingClosesAtTheDestination(t *testing.T) {
+	dest := newFakeDest(t)
+	conv := newFakeConv()
+	opts := baseOpts(t, dest)
+	opts.DestConv = conv
+	opts.SourceConv = conv
+
+	pr := openPR(7, time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	// Sources are listed open only, so a merged or closed pull request does
+	// not arrive with a finished state: it simply stops appearing. Without
+	// reconciliation the destination stays open forever, pointing at a
+	// branch the mirror push has already pruned.
+	res, err := Sync(context.Background(), []vcs.PullRequest{}, opts)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.Closed != 1 {
+		t.Fatalf("Closed = %d, want 1", res.Closed)
+	}
+	if last := dest.stateCalls[len(dest.stateCalls)-1]; last != vcs.PRClosed {
+		t.Errorf("final state call = %q, want closed", last)
+	}
+
+	rec, _ := opts.State.GetPR("gh-to-gh", "acme/widget", 7)
+	if rec.DestState != string(vcs.PRClosed) {
+		t.Errorf("DestState = %q, want closed", rec.DestState)
+	}
+
+	var note string
+	for _, p := range conv.posted {
+		if strings.Contains(p, "no longer open") {
+			note = p
+		}
+	}
+	if note == "" {
+		t.Error("closing it must leave a note saying why")
+	}
+	// It is not knowable from an open listing whether it merged, so the
+	// note must not claim either way.
+	if strings.Contains(note, "was merged") {
+		t.Errorf("the note claims more than is known: %q", note)
+	}
+}
+
+func TestReconciliationIsIdempotent(t *testing.T) {
+	dest := newFakeDest(t)
+	opts := baseOpts(t, dest)
+
+	pr := openPR(7, time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, err := Sync(context.Background(), []vcs.PullRequest{}, opts); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+
+	res, err := Sync(context.Background(), []vcs.PullRequest{}, opts)
+	if err != nil {
+		t.Fatalf("third: %v", err)
+	}
+	if res.Closed != 0 {
+		t.Errorf("an already closed destination must not be closed again, Closed = %d", res.Closed)
+	}
+}
+
+func TestReconciliationLeavesUntrackedPullRequestsAlone(t *testing.T) {
+	dest := newFakeDest(t)
+	opts := baseOpts(t, dest)
+
+	// Nothing was ever mirrored, so there is nothing to reconcile.
+	res, err := Sync(context.Background(), []vcs.PullRequest{}, opts)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Closed != 0 || len(dest.stateCalls) != 0 {
+		t.Error("an empty state must produce no destination writes")
+	}
+}

@@ -112,3 +112,46 @@ func TestLongSectionSplitsIntoMultipleBlocks(t *testing.T) {
 		t.Errorf("expected long content to split into multiple section blocks, got %d", sectionCount)
 	}
 }
+
+func TestASingleOversizedLineDoesNotProduceAnEmptyBlock(t *testing.T) {
+	// Block Kit rejects a section with empty text, and the failure
+	// notification is exactly where an enormous line shows up: a transport
+	// error carrying a multi-kilobyte HTML body. An empty block meant Slack
+	// answered 400 and the whole alert was lost.
+	msg := Message{
+		Title: "sync failed",
+		Sections: []Section{{
+			Lines: []string{strings.Repeat("x", maxSectionChars+500)},
+		}},
+	}
+
+	c := &SlackClient{}
+	blocks := c.renderBlocks(msg)
+	for i, b := range blocks {
+		if b.Type != "section" {
+			continue
+		}
+		if b.Text == nil || b.Text.Text == "" {
+			t.Fatalf("block %d is an empty section, which Slack rejects", i)
+		}
+		// Slack counts characters, not bytes.
+		if n := len([]rune(b.Text.Text)); n > maxSectionChars {
+			t.Errorf("block %d is %d characters, over the limit", i, n)
+		}
+	}
+}
+
+func TestTruncateCountsCharactersAndKeepsRunesWhole(t *testing.T) {
+	body := strings.Repeat("字", 50)
+	if got := truncate(body, 100); got != body {
+		t.Error("a string inside the limit must be untouched")
+	}
+
+	got := truncate(strings.Repeat("字", 200), 100)
+	if n := len([]rune(got)); n > 100 {
+		t.Errorf("truncated to %d characters, over the limit", n)
+	}
+	if strings.ContainsRune(got, '�') {
+		t.Error("truncation split a multi byte rune")
+	}
+}

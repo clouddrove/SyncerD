@@ -157,9 +157,9 @@ func upsertAnchored(ctx context.Context, opts Options, destNumber int, rec *stat
 		if opts.DryRun {
 			return 0, 0, nil
 		}
-		// An inline comment that was downgraded lives in the discussion, so
-		// updating through the discussion endpoint is correct either way:
-		// GitHub serves both from the same comment resource.
+		// The provider decides how to address the comment: an inline
+		// comment and a downgraded one can live in different id spaces,
+		// which is why the id it minted is handed straight back.
 		if uerr := opts.DestConv.UpdateComment(ctx, opts.DestRepo, destID, body); uerr != nil {
 			return 0, 0, fmt.Errorf("update mirrored review comment %s: %w", destID, uerr)
 		}

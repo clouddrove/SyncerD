@@ -289,7 +289,41 @@ func writeGitMetrics(path string, report *gitsync.GitReport, dryRun bool, runErr
 }
 
 func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath, metricsPath string) error {
-	c := cron.New(cron.WithLocation(time.UTC))
+	// Skip a tick rather than start a second run on the same Syncer. A run
+	// can outlive its own interval, and Syncer keeps per run state on the
+	// receiver while the sync state map has no locking, so an overlapping
+	// run corrupts both: the second run's report is voided by the first,
+	// and two writers on the state map abort the process.
+	c := cron.New(
+		cron.WithLocation(time.UTC),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
+	)
+
+	// Schedule periodic syncs before the first one runs. A typo in the
+	// schedule otherwise costs a full sync of every image to every
+	// destination before the process exits on it, which under a restart
+	// policy is a crash loop that repeats that work every time.
+	//
+	// Each run gets its own report, overwriting the file from the previous
+	// run, so it always describes the most recent one.
+	if _, err := c.AddFunc(cfg.Schedule, func() {
+		logging.Info("Running scheduled sync...")
+		report, err := syncer.SyncAll(context.Background())
+		writeSyncReport(reportPath, report, err)
+		writeSyncMetrics(metricsPath, report, err)
+		if err != nil {
+			logging.Error(fmt.Sprintf("Scheduled sync error: %v", err), "error", err.Error())
+		}
+	}); err != nil {
+		return fmt.Errorf("invalid cron schedule: %w", err)
+	}
+
+	// Listen for signals before the first sync, not after. Registered
+	// later, a SIGTERM arriving during the initial run gets Go's default
+	// disposition and kills the process outright, so nothing is persisted
+	// and the whole run is repeated on restart.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Run immediately on startup
 	logging.Info("Running initial sync...")
@@ -300,28 +334,9 @@ func runWithCron(cfg *config.Config, syncer *sync.Syncer, reportPath, metricsPat
 		logging.Error(fmt.Sprintf("Initial sync error: %v", err), "error", err.Error())
 	}
 
-	// Schedule periodic syncs. Each run gets its own report, overwriting
-	// the file from the previous run, so it always describes the most
-	// recent one.
-	_, err = c.AddFunc(cfg.Schedule, func() {
-		logging.Info("Running scheduled sync...")
-		report, err := syncer.SyncAll(context.Background())
-		writeSyncReport(reportPath, report, err)
-		writeSyncMetrics(metricsPath, report, err)
-		if err != nil {
-			logging.Error(fmt.Sprintf("Scheduled sync error: %v", err), "error", err.Error())
-		}
-	})
-	if err != nil {
-		return fmt.Errorf("invalid cron schedule: %w", err)
-	}
-
 	c.Start()
 	logging.Info("Cron scheduler started. Waiting for signals...")
 
-	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	logging.Info("Shutting down...")
@@ -360,6 +375,12 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath, metricsP
 		return fmt.Errorf("invalid git cron schedule: %w", err)
 	}
 
+	// Listen for signals before the first mirror. Registered after it, a
+	// SIGTERM during a long first mirror of a large organisation kills the
+	// process before any state is saved, and the whole thing is redone.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
 	logging.Info("Running initial git mirror...")
 	report, err := syncer.SyncAll(context.Background())
 	writeGitReport(reportPath, report, false, err)
@@ -371,8 +392,6 @@ func runGitCron(cfg *config.Config, syncer *gitsync.Syncer, reportPath, metricsP
 	c.Start()
 	logging.Info("Git mirror scheduler started. Waiting for signals...")
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	logging.Info("Shutting down...")

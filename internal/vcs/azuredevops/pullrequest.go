@@ -157,7 +157,7 @@ func (p *Provider) listPullRequests(ctx context.Context, repoPath, query string)
 		}
 
 		endpoint := fmt.Sprintf("%s/%s/%s/_apis/git/repositories/%s/%s?%s&$top=%d&$skip=%d&api-version=%s",
-			p.apiURL, url.PathEscape(p.org), url.PathEscape(p.project), url.PathEscape(repoPath),
+			p.apiURL, url.PathEscape(p.org), url.PathEscape(p.project), url.PathEscape(p.repoSegment(repoPath)),
 			prRoute, query, pageSize, pages*pageSize, apiVersion)
 
 		body, _, err := p.do(ctx, http.MethodGet, endpoint, nil)
@@ -338,11 +338,25 @@ func (p *Provider) addLabel(ctx context.Context, repoPath string, number int, na
 	return err
 }
 
+// repoSegment reduces a qualified path to the repository name.
+//
+// Azure DevOps reports a repository as project/name and every URL carries
+// the project as its own segment, so interpolating the qualified path
+// whole produced .../acme-proj/_apis/git/repositories/acme-proj%2Fwidget/...
+// and answered 404 for every repository.
+func (p *Provider) repoSegment(repoPath string) string {
+	trimmed := strings.Trim(repoPath, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
+}
+
 // prURL builds a pull request route. route selects the casing Azure DevOps
 // requires for that family of endpoints; see the constants above.
 func (p *Provider) prURL(repoPath, route, suffix string) string {
 	base := fmt.Sprintf("%s/%s/%s/_apis/git/repositories/%s/%s",
-		p.apiURL, url.PathEscape(p.org), url.PathEscape(p.project), url.PathEscape(repoPath), route)
+		p.apiURL, url.PathEscape(p.org), url.PathEscape(p.project), url.PathEscape(p.repoSegment(repoPath)), route)
 	if suffix != "" {
 		base += "/" + suffix
 	}

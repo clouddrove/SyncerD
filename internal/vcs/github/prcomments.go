@@ -216,6 +216,31 @@ func (p *Provider) listCommentPages(ctx context.Context, pageURL string) ([]apiC
 	return out, nil
 }
 
+// GitHub keeps discussion comments and review comments in separate id
+// spaces, addressed through different routes: /issues/comments/{id} and
+// /pulls/comments/{id}. The interface carries a single opaque id, so the
+// kind rides along in it.
+//
+// An id with no prefix is a discussion comment written by an older SyncerD,
+// which minted bare numeric ids. Reading those as discussion comments keeps
+// an existing state file working.
+const (
+	issueCommentPrefix  = "i:"
+	reviewCommentPrefix = "p:"
+)
+
+// commentRoute reports the path segment and bare id for a comment id.
+func commentRoute(commentID string) (route, id string) {
+	switch {
+	case strings.HasPrefix(commentID, reviewCommentPrefix):
+		return "pulls", strings.TrimPrefix(commentID, reviewCommentPrefix)
+	case strings.HasPrefix(commentID, issueCommentPrefix):
+		return "issues", strings.TrimPrefix(commentID, issueCommentPrefix)
+	default:
+		return "issues", commentID
+	}
+}
+
 // CreateComment posts a discussion comment and returns its destination id.
 func (p *Provider) CreateComment(ctx context.Context, repoPath string, number int, body string) (string, error) {
 	raw, _, err := p.do(ctx, http.MethodPost,
@@ -228,21 +253,23 @@ func (p *Provider) CreateComment(ctx context.Context, repoPath string, number in
 	if err := json.Unmarshal(raw, &created); err != nil {
 		return "", fmt.Errorf("github: decode created comment: %w", err)
 	}
-	return strconv.FormatInt(created.ID, 10), nil
+	return issueCommentPrefix + strconv.FormatInt(created.ID, 10), nil
 }
 
 // UpdateComment rewrites a comment SyncerD created earlier.
 func (p *Provider) UpdateComment(ctx context.Context, repoPath, commentID, body string) error {
+	route, id := commentRoute(commentID)
 	_, _, err := p.do(ctx, http.MethodPatch,
-		fmt.Sprintf("%s/repos/%s/issues/comments/%s", p.apiURL, repoPath, commentID),
+		fmt.Sprintf("%s/repos/%s/%s/comments/%s", p.apiURL, repoPath, route, id),
 		map[string]any{"body": body})
 	return err
 }
 
 // DeleteComment removes a comment SyncerD created earlier.
 func (p *Provider) DeleteComment(ctx context.Context, repoPath, commentID string) error {
+	route, id := commentRoute(commentID)
 	_, _, err := p.do(ctx, http.MethodDelete,
-		fmt.Sprintf("%s/repos/%s/issues/comments/%s", p.apiURL, repoPath, commentID), nil)
+		fmt.Sprintf("%s/repos/%s/%s/comments/%s", p.apiURL, repoPath, route, id), nil)
 	return err
 }
 
@@ -281,5 +308,5 @@ func (p *Provider) CreateReviewComment(ctx context.Context, repoPath string, num
 	if err := json.Unmarshal(raw, &created); err != nil {
 		return "", fmt.Errorf("github: decode created review comment: %w", err)
 	}
-	return strconv.FormatInt(created.ID, 10), nil
+	return reviewCommentPrefix + strconv.FormatInt(created.ID, 10), nil
 }

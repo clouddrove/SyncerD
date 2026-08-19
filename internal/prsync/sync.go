@@ -67,10 +67,75 @@ func Sync(ctx context.Context, prs []vcs.PullRequest, opts Options) (Result, err
 		}
 	}
 
+	if err := reconcileVanished(ctx, prs, opts, &res); err != nil {
+		res.Failures = append(res.Failures, opts.redact(err.Error()))
+	}
+
 	if len(res.Failures) > 0 {
 		return res, fmt.Errorf("%d pull request(s) failed to mirror", len(res.Failures))
 	}
 	return res, nil
+}
+
+// reconcileVanished closes destination pull requests whose source has left
+// the listing.
+//
+// Sources are listed open only, so a pull request that merges or closes
+// simply disappears rather than arriving with a finished state. Without
+// this, the destination pull request stays open forever: its branch is
+// pruned by the mirror push, so it ends up open and pointing at nothing,
+// and its state record is never cleaned up either.
+//
+// What happened to it upstream is not knowable from an open listing, so the
+// note says only that it is no longer open. That is less than the note a
+// state transition produces, and it is true.
+func reconcileVanished(ctx context.Context, listed []vcs.PullRequest, opts Options, res *Result) error {
+	tracked := opts.State.PRNumbers(opts.Mirror, opts.SourceRepo)
+	if len(tracked) == 0 {
+		return nil
+	}
+
+	stillListed := make(map[int]bool, len(listed))
+	for _, pr := range listed {
+		stillListed[pr.Number] = true
+	}
+
+	for _, number := range tracked {
+		if stillListed[number] || ctx.Err() != nil {
+			continue
+		}
+		rec, ok := opts.State.GetPR(opts.Mirror, opts.SourceRepo, number)
+		if !ok || rec.DestNumber == 0 {
+			continue
+		}
+		if rec.DestState != string(vcs.PROpen) {
+			continue
+		}
+
+		if opts.DryRun {
+			logging.Info(fmt.Sprintf("mirror %s: would close destination pull request %d, %s#%d is no longer open at the source",
+				opts.Mirror, rec.DestNumber, opts.SourceRepo, number))
+			res.Closed++
+			continue
+		}
+
+		note := fmt.Sprintf("%s\nClosed because %s#%d is no longer open at the source. Whether it merged is not visible from here; the branch mirror carries whatever landed.",
+			Marker(opts.SourceRepo, number), opts.SourceRepo, number)
+		if opts.DestConv != nil {
+			if _, err := opts.DestConv.CreateComment(ctx, opts.DestRepo, rec.DestNumber, note); err != nil {
+				logging.Warn(fmt.Sprintf("mirror %s: could not post the closing note on destination pull request %d: %s",
+					opts.Mirror, rec.DestNumber, opts.redact(err.Error())))
+			}
+		}
+		if err := opts.Dest.ClosePullRequest(ctx, opts.DestRepo, rec.DestNumber); err != nil {
+			return fmt.Errorf("close vanished pull request %d: %w", number, err)
+		}
+
+		rec.DestState = string(vcs.PRClosed)
+		opts.State.MarkPR(opts.Mirror, opts.SourceRepo, number, rec)
+		res.Closed++
+	}
+	return nil
 }
 
 // syncOne applies the lifecycle rules to a single source pull request.
@@ -211,11 +276,20 @@ func syncOne(ctx context.Context, pr vcs.PullRequest, opts Options, res *Result)
 	// Conversation before closing, so the closing note is the last thing on
 	// a finished pull request.
 	if opts.Comments || opts.Reviews {
-		created, downgraded, err := syncConversation(ctx, pr, destNumber, opts, &rec)
+		created, downgraded, cerr := syncConversation(ctx, pr, destNumber, opts, &rec)
 		res.CommentsCreated += created
 		res.Downgraded += downgraded
-		if err != nil {
-			return err
+		if cerr != nil {
+			// Record what did get written before giving up. Comment ids
+			// live in rec, and returning without saving them would repost
+			// every comment already mirrored on the next run, forever, for
+			// any pull request whose conversation cannot complete.
+			if !opts.DryRun {
+				rec.DestNumber = destNumber
+				rec.DestState = string(destState)
+				opts.State.MarkPR(opts.Mirror, opts.SourceRepo, pr.Number, rec)
+			}
+			return cerr
 		}
 	}
 

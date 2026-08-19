@@ -1,8 +1,10 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -157,5 +159,30 @@ func TestForgetPRCausesReinspection(t *testing.T) {
 	s.ForgetPR("m", "acme/widget", 7)
 	if _, ok := s.GetPR("m", "acme/widget", 7); ok {
 		t.Error("the record should be gone")
+	}
+}
+
+func TestGitStateSurvivesConcurrentWriters(t *testing.T) {
+	// The git engine mirrors repositories on a pool of goroutines, and
+	// pull request records are written from inside that pool. Unguarded,
+	// this is a concurrent map write, which aborts the process outright.
+	s := NewGit()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			repo := fmt.Sprintf("acme/repo-%d", n)
+			s.Mark("m", repo, "dest", "fingerprint")
+			s.MarkPR("m", repo, n, PRRecord{DestNumber: n, DestState: "open"})
+			s.GetPR("m", repo, n)
+			s.Get("m", repo)
+		}(i)
+	}
+	wg.Wait()
+
+	if _, ok := s.GetPR("m", "acme/repo-3", 3); !ok {
+		t.Error("a record written under contention went missing")
 	}
 }
