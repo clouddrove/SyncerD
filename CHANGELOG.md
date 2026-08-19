@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `git-sync` discovered only the public repositories of a GitHub personal account. The listing fell back to `GET /users/{owner}/repos` when the owner was not an organisation, and that endpoint returns public repositories only, whatever token is presented, so private repositories were silently missing from every run with no error to point at. When the token belongs to the configured owner, SyncerD now lists through `GET /user/repos?visibility=all&affiliation=owner`, which reports private repositories. Mirroring another account still sees its public repositories only, since no credential can see further
+- `git-sync` failed outright at the `discover` stage when a GitLab source was a user namespace rather than a group: only `GET /groups/{owner}/projects` was tried, and it 404s for a personal namespace. A 404 on the first page now falls back to `GET /users/{owner}/projects`, which lists private projects the token can see
+
+### Changed
+- A `git-sync` mirror whose source discovery succeeds but reports no repositories at all now logs a warning naming the likely cause (a token that cannot read the source's private repositories), because an empty run was otherwise indistinguishable from a mirror that is up to date
+
 ## [0.1.2] - 2026-08-14
 
 ### Added

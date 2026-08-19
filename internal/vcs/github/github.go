@@ -42,6 +42,9 @@ type Provider struct {
 
 	ownerMu    sync.Mutex
 	ownerIsOrg *bool
+
+	loginMu sync.Mutex
+	login   *string
 }
 
 // New validates cfg and returns a provider.
@@ -154,11 +157,69 @@ func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
 	// A 404 partway through is a real failure, not a reason to restart
 	// against a different endpoint and lose what we already collected.
 	if isNotFound(err) && len(repos) == 0 {
-		userURL := fmt.Sprintf("%s/users/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
-		return p.listFrom(ctx, userURL)
+		return p.listUserRepos(ctx)
 	}
 
 	return nil, err
+}
+
+// listUserRepos lists a personal account's repositories.
+//
+// GET /users/{username}/repos returns public repositories only, whatever
+// the token: GitHub documents it as "Lists public repositories for the
+// specified user", and it does not widen for an authenticated caller. A
+// mirror of a personal account configured that way silently discovers only
+// the public half, with no error to point at.
+//
+// GET /user/repos is the endpoint that reports private repositories, but it
+// only ever describes the account the token belongs to. So when the token
+// belongs to the configured owner, that endpoint is used; otherwise the
+// public listing is all any credential can see anyway.
+func (p *Provider) listUserRepos(ctx context.Context) ([]vcs.Repo, error) {
+	login, err := p.authenticatedLogin(ctx)
+	if err != nil {
+		// The token could not be resolved to an account. Fall back to the
+		// public listing rather than failing discovery outright, so a
+		// mirror of a public personal account keeps working.
+		login = ""
+	}
+
+	if login != "" && strings.EqualFold(login, p.owner) {
+		selfURL := fmt.Sprintf("%s/user/repos?per_page=100&affiliation=owner&visibility=all", p.apiURL)
+		return p.listFrom(ctx, selfURL)
+	}
+
+	userURL := fmt.Sprintf("%s/users/%s/repos?per_page=100&type=all", p.apiURL, p.owner)
+	return p.listFrom(ctx, userURL)
+}
+
+// authenticatedLogin returns the account login the token belongs to. The
+// answer is cached because it cannot change during a run, and the lock is
+// held across the lookup so concurrent workers resolve it once. A token
+// that GET /user does not accept, such as a GitHub App installation token,
+// yields an error rather than a login.
+func (p *Provider) authenticatedLogin(ctx context.Context) (string, error) {
+	p.loginMu.Lock()
+	defer p.loginMu.Unlock()
+
+	if p.login != nil {
+		return *p.login, nil
+	}
+
+	body, _, err := p.do(ctx, http.MethodGet, p.apiURL+"/user", nil)
+	if err != nil {
+		// Not cached, so a later call can retry.
+		return "", err
+	}
+
+	var who struct {
+		Login string `json:"login"`
+	}
+	if err := json.Unmarshal(body, &who); err != nil {
+		return "", fmt.Errorf("github: decode authenticated user: %w", err)
+	}
+	p.login = &who.Login
+	return who.Login, nil
 }
 
 // maxPages bounds a paginated listing. GitHub caps at 100 per page, so this

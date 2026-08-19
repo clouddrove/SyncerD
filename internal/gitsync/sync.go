@@ -214,6 +214,16 @@ func (e *Engine) Run(ctx context.Context, mirrors []Mirror) (*GitReport, error) 
 		logging.Info(fmt.Sprintf("mirror %s: %d repositories discovered, %d selected", m.Name, len(repos), len(selected)),
 			"mirror", m.Name, "discovered", len(repos), "selected", len(selected))
 
+		// Discovery that succeeds but reports nothing is the shape a
+		// under scoped token takes: the API answers, and answers with the
+		// public half of an account, or with nothing at all. Say so, since
+		// an empty run is otherwise indistinguishable from a mirror that
+		// is genuinely up to date.
+		if len(repos) == 0 {
+			logging.Warn(fmt.Sprintf("mirror %s: source provider reported no repositories at all; if the source holds private repositories, check that the token can read them (a GitHub token needs the repo scope, or repository access on a fine grained token; a GitLab token needs read_api)", m.Name),
+				"mirror", m.Name)
+		}
+
 		if err := e.checkDestinationCollisions(m, selected); err != nil {
 			e.addFailure(GitFailure{Mirror: m.Name, Stage: "discover", Error: e.redact(err.Error())})
 			if e.opts.FailFast {

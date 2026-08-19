@@ -128,6 +128,38 @@ const maxPages = 1000
 // returns a cyclic or repeated page number cannot loop it forever; whatever
 // was collected before a bound trip is still returned alongside the error.
 func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
+	groupPage := func(page string) string {
+		return fmt.Sprintf("%s/api/v4/groups/%s/projects?include_subgroups=true&per_page=100&archived=&page=%s",
+			p.base, url.PathEscape(p.owner), url.QueryEscape(page))
+	}
+
+	repos, err := p.listPages(ctx, groupPage)
+	if err == nil {
+		return repos, nil
+	}
+
+	// A 404 on the very first page means the owner is a user namespace
+	// rather than a group. GET /users/{owner}/projects lists that
+	// namespace, including its private projects when the token can see
+	// them, so a personal namespace is mirrorable instead of failing
+	// discovery outright. A 404 partway through is a real failure, not a
+	// reason to restart against a different endpoint.
+	if isNotFound(err) && len(repos) == 0 {
+		userPage := func(page string) string {
+			return fmt.Sprintf("%s/api/v4/users/%s/projects?per_page=100&archived=&page=%s",
+				p.base, url.PathEscape(p.owner), url.QueryEscape(page))
+		}
+		return p.listPages(ctx, userPage)
+	}
+
+	return nil, err
+}
+
+// listPages walks a paginated project listing built by pageURL, following
+// the X-Next-Page header. Whatever was collected before an error is still
+// returned alongside it, so the caller can tell a first page failure from a
+// failure partway through.
+func (p *Provider) listPages(ctx context.Context, pageURL func(page string) string) ([]vcs.Repo, error) {
 	var out []vcs.Repo
 	page := "1"
 	seen := make(map[string]bool)
@@ -141,10 +173,7 @@ func (p *Provider) ListRepos(ctx context.Context) ([]vcs.Repo, error) {
 		}
 		seen[page] = true
 
-		endpoint := fmt.Sprintf("%s/api/v4/groups/%s/projects?include_subgroups=true&per_page=100&archived=&page=%s",
-			p.base, url.PathEscape(p.owner), url.QueryEscape(page))
-
-		body, header, err := p.do(ctx, http.MethodGet, endpoint, nil)
+		body, header, err := p.do(ctx, http.MethodGet, pageURL(page), nil)
 		if err != nil {
 			return out, err
 		}

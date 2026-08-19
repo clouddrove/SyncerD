@@ -97,6 +97,42 @@ func TestListReposFallsBackToComputedCloneURLWhenAPIOmitsIt(t *testing.T) {
 	}
 }
 
+func TestListReposFallsBackToUserNamespace(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"404 Group Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/api/v4/users/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]any{
+			{"path": "personal", "path_with_namespace": "acme/personal", "default_branch": "main"},
+		})
+	})
+
+	p := newProvider(t, mux)
+	repos, err := p.ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "personal" {
+		t.Fatalf("unexpected repos: %+v", repos)
+	}
+}
+
+func TestListReposDoesNotFallBackOnNonNotFoundError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/groups/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"401 Unauthorized"}`, http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/api/v4/users/acme/projects", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a 401 on the group endpoint must not silently fall back to the user namespace")
+	})
+
+	p := newProvider(t, mux)
+	if _, err := p.ListRepos(context.Background()); err == nil {
+		t.Fatal("expected the 401 to be surfaced")
+	}
+}
+
 func TestEnsureRepoLooksUpNamespaceThenCreates(t *testing.T) {
 	var created map[string]any
 	mux := http.NewServeMux()
