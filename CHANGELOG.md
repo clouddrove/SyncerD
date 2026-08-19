@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A failed state save on the fail-fast path was silent, so everything copied before the abort was copied again on the next run with no explanation
 - `git-sync` could not authenticate to Azure DevOps over git in `pat` mode, fixed in v0.2.1 and described there
 
+### Removed
+- The `SyncerD` scheduled workflow, which ran `syncerd sync --once` against a `syncerd.yaml` this repository has never contained. It had failed on every run since at least June, and its push trigger filtered on a path that does not exist. Deleted rather than repaired: the dogfooding it was meant to do is not wanted, and a workflow that has only ever failed is worse than none
+
 ### Fixed
+- SyncerD parsed its own binary as its configuration. Config discovery accepted an extensionless file named `syncerd`, which is exactly what `make build` writes into the working directory, so running `./syncerd sync` beside the binary failed with `yaml: control characters are not allowed`, an error that points at nothing. Discovery now accepts only a real `syncerd.yaml` or `syncerd.yml`, and says where it looked when it finds neither
 - A mirrored pull request with no labels failed to update, taking the whole pull request with it. Once the mirror owned labels, an empty set was sent as null rather than as an empty array, and GitHub rejects that with 422. Most pull requests carry no labels, so this affected most of them. Found by the live suite on its first real run
 
 ### Added

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -54,6 +56,35 @@ type SlackConfig struct {
 	MessageFormat string `mapstructure:"message_format"`
 }
 
+// configSearchPaths are the directories searched for a config file, and
+// configSearchNames the file names accepted in each, in order.
+var (
+	configSearchPaths = []string{".", "./config"}
+	configSearchNames = []string{"syncerd.yaml", "syncerd.yml"}
+)
+
+// findConfigFile returns the first config file present, or an error naming
+// everywhere it looked.
+//
+// Only a real extension counts. An extensionless "syncerd" is the compiled
+// binary, not configuration.
+func findConfigFile() (string, error) {
+	var tried []string
+	for _, dir := range configSearchPaths {
+		for _, name := range configSearchNames {
+			candidate := filepath.Join(dir, name)
+			tried = append(tried, candidate)
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no config file found; looked for %s. Pass --config to name one explicitly",
+		strings.Join(tried, ", "))
+}
+
 func Load(configPath string) (*Config, error) {
 	viper.SetConfigType("yaml")
 	viper.SetConfigName("syncerd")
@@ -61,9 +92,20 @@ func Load(configPath string) (*Config, error) {
 	if configPath != "" {
 		viper.SetConfigFile(configPath)
 	} else {
-		// Look for config in current directory
-		viper.AddConfigPath(".")
-		viper.AddConfigPath("./config")
+		// Resolve the file here rather than letting viper search.
+		//
+		// viper matches an extensionless file when a config type is set,
+		// and the file it finds in a working directory is very often the
+		// syncerd binary itself: `make build` writes ./syncerd, and running
+		// ./syncerd sync in that directory made the tool parse its own
+		// binary as YAML. The error that produced, "control characters are
+		// not allowed", says nothing about what actually happened, and the
+		// project's own scheduled workflow failed that way for months.
+		found, err := findConfigFile()
+		if err != nil {
+			return nil, err
+		}
+		viper.SetConfigFile(found)
 	}
 
 	// Environment variables: SYNCERD_ prefix, with nested keys mapped via
