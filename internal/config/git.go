@@ -101,6 +101,8 @@ type MirrorConfig struct {
 	PushMode      string       `mapstructure:"push_mode"`
 	Adopt         bool         `mapstructure:"adopt"`
 	NameTemplate  string       `mapstructure:"name_template"`
+
+	PullRequests PullRequestsConfig `mapstructure:"pull_requests"`
 }
 
 // CreateMissingOrDefault reports the effective create_missing value.
@@ -109,6 +111,27 @@ func (m MirrorConfig) CreateMissingOrDefault() bool {
 		return true
 	}
 	return *m.CreateMissing
+}
+
+// defaultPRBranchPrefix is the branch namespace pull request heads are
+// mirrored into when a mirror does not name one.
+const defaultPRBranchPrefix = "syncerd/pr"
+
+// PullRequestsConfig enables pull request mirroring for one mirror. It is
+// disabled by default: an enabled mirror pushes the head of every open
+// fork pull request, which is third party code, into destination branches.
+type PullRequestsConfig struct {
+	Enabled      bool     `mapstructure:"enabled"`
+	BranchPrefix string   `mapstructure:"branch_prefix"`
+	States       []string `mapstructure:"states"`
+}
+
+// BranchPrefixOrDefault reports the effective branch prefix.
+func (p PullRequestsConfig) BranchPrefixOrDefault() string {
+	if p.BranchPrefix == "" {
+		return defaultPRBranchPrefix
+	}
+	return p.BranchPrefix
 }
 
 // Provider looks up a provider by name.
@@ -292,6 +315,20 @@ func (c *Config) ValidateGitSync() error {
 			}
 			if tpl.ProducesNestedName() && flatProviderTypes[dst.Type] {
 				return fmt.Errorf("git.mirrors[%d].name_template renders a nested name but destination type %q does not support nested repository paths", i, dst.Type)
+			}
+		}
+
+		// A disabled block is not validated. Its fields have no effect,
+		// and rejecting a stale value in one would block a run that does
+		// not read it.
+		if m.PullRequests.Enabled {
+			if err := vcs.ValidateBranchPrefix(m.PullRequests.BranchPrefixOrDefault()); err != nil {
+				return fmt.Errorf("git.mirrors[%d].pull_requests: %w", i, err)
+			}
+			for _, s := range m.PullRequests.States {
+				if s != "open" {
+					return fmt.Errorf("git.mirrors[%d].pull_requests.states %q is not supported: only open is accepted, because mirroring a closed or merged pull request needs the destination pull request objects that arrive in a later release", i, s)
+				}
 			}
 		}
 	}

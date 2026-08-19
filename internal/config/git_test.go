@@ -316,3 +316,50 @@ func TestValidateGitSyncRejectsBadVisibility(t *testing.T) {
 		t.Fatalf("expected a visibility error, got %v", err)
 	}
 }
+
+func TestValidateGitSyncAcceptsPullRequests(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].PullRequests = PullRequestsConfig{Enabled: true, BranchPrefix: "syncerd/pr", States: []string{"open"}}
+	cfg.Git.ApplyDefaults()
+	if err := cfg.ValidateGitSync(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}
+
+func TestValidateGitSyncRejectsBadBranchPrefix(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].PullRequests = PullRequestsConfig{Enabled: true, BranchPrefix: "/bad/"}
+	cfg.Git.ApplyDefaults()
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "branch_prefix") {
+		t.Fatalf("expected a branch_prefix error, got %v", err)
+	}
+}
+
+func TestValidateGitSyncRejectsNonOpenPullRequestStates(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].PullRequests = PullRequestsConfig{Enabled: true, States: []string{"merged"}}
+	cfg.Git.ApplyDefaults()
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "only open is accepted") {
+		t.Fatalf("expected a states error naming open, got %v", err)
+	}
+}
+
+func TestValidateGitSyncIgnoresPullRequestFieldsWhenDisabled(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].PullRequests = PullRequestsConfig{Enabled: false, BranchPrefix: "/bad/", States: []string{"merged"}}
+	cfg.Git.ApplyDefaults()
+	if err := cfg.ValidateGitSync(); err != nil {
+		t.Fatalf("a disabled pull_requests block must not be validated: %v", err)
+	}
+}
+
+func TestBranchPrefixOrDefault(t *testing.T) {
+	if got := (PullRequestsConfig{}).BranchPrefixOrDefault(); got != "syncerd/pr" {
+		t.Errorf("BranchPrefixOrDefault = %q, want syncerd/pr", got)
+	}
+	if got := (PullRequestsConfig{BranchPrefix: "mirrored/pr"}).BranchPrefixOrDefault(); got != "mirrored/pr" {
+		t.Errorf("BranchPrefixOrDefault = %q, want mirrored/pr", got)
+	}
+}
