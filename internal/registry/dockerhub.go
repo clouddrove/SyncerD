@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -22,6 +23,43 @@ type DockerHubRegistry struct {
 	password string
 	token    string
 	client   *http.Client
+
+	// jwt is the session token Docker Hub returns from a username and
+	// password login. The Hub API authenticates with that token, never with
+	// HTTP basic auth, so discarding it made every authenticated listing
+	// fall back to a scheme the API does not accept: a private repository
+	// answered 404, blamed on the image rather than on the credentials.
+	//
+	// Guarded because the sync engine lists tags for several images at once
+	// while Authenticate may still be running.
+	mu  sync.Mutex
+	jwt string
+}
+
+// setJWT records the session token from a successful login.
+func (r *DockerHubRegistry) setJWT(token string) {
+	r.mu.Lock()
+	r.jwt = token
+	r.mu.Unlock()
+}
+
+// authorize applies the strongest credential available: the session token
+// from a login, then a configured personal access token, then basic auth
+// for any deployment that still relies on it. An anonymous registry gets
+// no header at all.
+func (r *DockerHubRegistry) authorize(req *http.Request) {
+	r.mu.Lock()
+	jwt := r.jwt
+	r.mu.Unlock()
+
+	switch {
+	case jwt != "":
+		req.Header.Set("Authorization", "Bearer "+jwt)
+	case r.token != "":
+		req.Header.Set("Authorization", "Bearer "+r.token)
+	case r.username != "" && r.password != "":
+		req.SetBasicAuth(r.username, r.password)
+	}
 }
 
 func NewDockerHubRegistry(registry, username, password, token string) *DockerHubRegistry {
@@ -56,6 +94,17 @@ func (r *DockerHubRegistry) Authenticate(ctx context.Context) error {
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("docker hub authentication failed: %s", resp.Status)
 		}
+
+		var login struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&login); err != nil {
+			return fmt.Errorf("docker hub authentication succeeded but the session token could not be read: %w", err)
+		}
+		if login.Token == "" {
+			return fmt.Errorf("docker hub authentication succeeded but returned no session token")
+		}
+		r.setJWT(login.Token)
 		return nil
 	}
 	// Token: verify it's accepted by the API
@@ -82,11 +131,7 @@ func (r *DockerHubRegistry) ListTags(ctx context.Context, imageName string) ([]s
 	if err != nil {
 		return nil, err
 	}
-	if r.token != "" {
-		req.Header.Set("Authorization", "Bearer "+r.token)
-	} else if r.username != "" && r.password != "" {
-		req.SetBasicAuth(r.username, r.password)
-	}
+	r.authorize(req)
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -123,11 +168,7 @@ func (r *DockerHubRegistry) ListTags(ctx context.Context, imageName string) ([]s
 		if err != nil {
 			return nil, fmt.Errorf("build pagination request: %w", err)
 		}
-		if r.token != "" {
-			req.Header.Set("Authorization", "Bearer "+r.token)
-		} else if r.username != "" && r.password != "" {
-			req.SetBasicAuth(r.username, r.password)
-		}
+		r.authorize(req)
 
 		resp, err := r.client.Do(req)
 		if err != nil {
