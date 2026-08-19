@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/clouddrove/syncerd/internal/logging"
+	"github.com/clouddrove/syncerd/internal/prsync"
 	"github.com/clouddrove/syncerd/internal/runreport"
 	"github.com/clouddrove/syncerd/internal/state"
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -26,7 +27,13 @@ type MirrorEvent struct {
 	// PRBranchesPushed counts the pull request heads mirrored as
 	// branches. Zero unless the mirror enables pull request sync.
 	PRBranchesPushed int
-	Created          bool
+	// The remaining counters are zero unless the mirror also enables
+	// mirror_objects.
+	PRsCreated      int
+	PRsUpdated      int
+	PRsClosed       int
+	CommentsCreated int
+	Created         bool
 }
 
 // GitFailure records one repository that failed, and where.
@@ -34,7 +41,7 @@ type GitFailure struct {
 	Mirror     string
 	SourceRepo string
 	DestRepo   string
-	Stage      string // discover | ensure | fetch | pull-requests | push | adopt | worker
+	Stage      string // discover | ensure | fetch | pull-requests | push | pr-objects | adopt | worker
 	Error      string
 }
 
@@ -62,6 +69,10 @@ func (r *GitReport) ToRunReport(runID string, dryRun bool) runreport.Report {
 				"refs_pushed":        ev.RefsPushed,
 				"refs_deleted":       ev.RefsDeleted,
 				"pr_branches_pushed": ev.PRBranchesPushed,
+				"prs_created":        ev.PRsCreated,
+				"prs_updated":        ev.PRsUpdated,
+				"prs_closed":         ev.PRsClosed,
+				"comments_created":   ev.CommentsCreated,
 			},
 		})
 	}
@@ -110,6 +121,14 @@ func (r *GitReport) ToRunReport(runID string, dryRun bool) runreport.Report {
 type PRSyncConfig struct {
 	Enabled      bool
 	BranchPrefix string
+
+	// MirrorObjects recreates pull requests at the destination. It also
+	// widens branch mirroring to every pull request rather than fork heads
+	// alone, so a destination pull request has one uniform head name.
+	MirrorObjects bool
+	Comments      bool
+	Reviews       bool
+	Labels        bool
 }
 
 // Mirror is one resolved source to destination pair, ready to run.
@@ -128,7 +147,12 @@ type Mirror struct {
 
 	// SourcePRs is set only when the source provider can list pull
 	// requests and the mirror enables it.
-	SourcePRs    vcs.PullRequestLister
+	SourcePRs vcs.PullRequestLister
+	// DestPRs and the conversation endpoints are set only when the mirror
+	// enables mirror_objects and both providers support it.
+	DestPRs      vcs.PullRequestWriter
+	SourceConv   vcs.PullRequestConversation
+	DestConv     vcs.PullRequestConversation
 	PullRequests PRSyncConfig
 }
 
@@ -392,7 +416,7 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 			e.fail(cancel, GitFailure{Mirror: m.Name, SourceRepo: repo.Path, DestRepo: destName, Stage: "pull-requests", Error: e.redact(cerr.Error())})
 			return
 		}
-		refs = append(refs, prRefs(prs, m.PullRequests.BranchPrefix)...)
+		refs = append(refs, prRefs(prs, m.PullRequests.BranchPrefix, m.PullRequests.MirrorObjects)...)
 	}
 
 	fp := Fingerprint(refs)
@@ -502,7 +526,7 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 
 	prBranches := 0
 	if m.PullRequests.Enabled && m.SourcePRs != nil {
-		prBranches = e.syncPRBranches(ctx, m, repo, prs, cacheDir, srcCred)
+		prBranches = e.syncPRBranches(ctx, m, repo, prs, cacheDir, srcURL, srcCred)
 	}
 
 	if e.opts.DryRun && needsCreate {
@@ -549,6 +573,38 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		}
 	}
 
+	// Pull request objects come after the push, because a destination pull
+	// request cannot reference commits that have not arrived yet.
+	var prRes prsync.Result
+	if m.PullRequests.Enabled && m.PullRequests.MirrorObjects && m.DestPRs != nil {
+		var perr error
+		prRes, perr = prsync.Sync(ctx, prs, prsync.Options{
+			Mirror:       m.Name,
+			SourceRepo:   repo.Path,
+			DestRepo:     destName,
+			BranchPrefix: m.PullRequests.BranchPrefix,
+			Source:       m.SourcePRs,
+			Dest:         m.DestPRs,
+			SourceConv:   m.SourceConv,
+			DestConv:     m.DestConv,
+			Comments:     m.PullRequests.Comments,
+			Reviews:      m.PullRequests.Reviews,
+			Labels:       m.PullRequests.Labels,
+			State:        e.opts.State,
+			DryRun:       e.opts.DryRun,
+			Redact:       e.redact,
+		})
+		if perr != nil {
+			// The branches mirrored. Record the pull request failure
+			// without discarding that, since the two are separate
+			// promises and only one of them broke.
+			e.addFailure(GitFailure{
+				Mirror: m.Name, SourceRepo: repo.Path, DestRepo: destName,
+				Stage: "pr-objects", Error: e.redact(perr.Error()),
+			})
+		}
+	}
+
 	e.addEvent(MirrorEvent{
 		Mirror:           m.Name,
 		SourceRepo:       repo.Path,
@@ -556,6 +612,10 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 		RefsPushed:       res.Pushed,
 		RefsDeleted:      res.Deleted,
 		PRBranchesPushed: prBranches,
+		PRsCreated:       prRes.Created,
+		PRsUpdated:       prRes.Updated,
+		PRsClosed:        prRes.Closed,
+		CommentsCreated:  prRes.CommentsCreated,
 		Created:          created,
 	})
 	logging.Info(fmt.Sprintf("mirror %s: %s -> %s (%d pushed, %d deleted)", m.Name, repo.Path, destName, res.Pushed, res.Deleted),
@@ -564,12 +624,20 @@ func (e *Engine) mirrorRepo(ctx context.Context, cancel context.CancelFunc, m Mi
 }
 
 // prRefs renders the pull request heads that will become branches, as refs
-// for the fingerprint. Only a fork head produces a branch: a head living in
-// the source repository is already covered by refs/heads/*.
-func prRefs(prs []vcs.PullRequest, prefix string) []Ref {
+// for the fingerprint. A fork head always produces a branch, since its
+// commits reach the destination no other way.
+//
+// When the mirror also recreates pull request objects, every pull request
+// gets a branch, not only the fork heads: a destination pull request has to
+// name one head branch, and deriving it per pull request would put a
+// conditional in every create, update, and comparison.
+func prRefs(prs []vcs.PullRequest, prefix string, all bool) []Ref {
 	var out []Ref
 	for _, pr := range prs {
-		if !pr.IsFork() || pr.HeadSHA == "" {
+		if pr.HeadSHA == "" {
+			continue
+		}
+		if !all && !pr.IsFork() {
 			continue
 		}
 		out = append(out, Ref{Name: "refs/heads/" + vcs.PRBranch(prefix, pr.Number), SHA: pr.HeadSHA})
@@ -599,12 +667,12 @@ func checkPRPrefixCollision(refs []Ref, prefix string) error {
 // or made private while its pull request stays open, and a single
 // unmirrorable pull request must not fail a repository whose branches
 // mirror correctly.
-func (e *Engine) syncPRBranches(ctx context.Context, m Mirror, repo vcs.Repo, prs []vcs.PullRequest, cacheDir string, srcCred vcs.GitCredential) int {
+func (e *Engine) syncPRBranches(ctx context.Context, m Mirror, repo vcs.Repo, prs []vcs.PullRequest, cacheDir, srcURL string, srcCred vcs.GitCredential) int {
 	keep := make(map[string]bool, len(prs))
 	count := 0
 
 	for _, pr := range prs {
-		if !pr.IsFork() {
+		if !pr.IsFork() && !m.PullRequests.MirrorObjects {
 			continue
 		}
 		if pr.HeadSHA == "" {
@@ -613,7 +681,14 @@ func (e *Engine) syncPRBranches(ctx context.Context, m Mirror, repo vcs.Repo, pr
 			continue
 		}
 		branch := vcs.PRBranch(m.PullRequests.BranchPrefix, pr.Number)
-		if err := e.opts.Runner.FetchPRHead(ctx, cacheDir, pr.HeadRepoCloneURL, "refs/heads/"+pr.HeadBranch, branch, srcCred); err != nil {
+		// A fork head lives in the fork; a head in the source repository is
+		// read from the source itself, which the cache already has a remote
+		// for.
+		from := pr.HeadRepoCloneURL
+		if from == "" {
+			from = srcURL
+		}
+		if err := e.opts.Runner.FetchPRHead(ctx, cacheDir, from, "refs/heads/"+pr.HeadBranch, branch, srcCred); err != nil {
 			logging.Warn(fmt.Sprintf("mirror %s: %s could not fetch the head of pull request %d, skipping it: %s",
 				m.Name, repo.Path, pr.Number, e.redact(err.Error())),
 				"mirror", m.Name, "source", repo.Path, "pull_request", pr.Number)

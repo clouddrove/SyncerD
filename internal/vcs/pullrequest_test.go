@@ -1,6 +1,9 @@
 package vcs
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestValidateBranchPrefix(t *testing.T) {
 	cases := []struct {
@@ -43,5 +46,37 @@ func TestIsFork(t *testing.T) {
 	}
 	if !(PullRequest{HeadRepoCloneURL: "https://github.com/other/repo.git"}).IsFork() {
 		t.Error("a pull request carrying a head repository clone URL is a fork")
+	}
+}
+
+// fakeWriter is a compile time check that the destination side interfaces
+// are implementable, and a place to prove the never merge rule has no
+// method to call in the first place.
+type fakeWriter struct{}
+
+func (fakeWriter) FindPullRequest(context.Context, string, string) (PullRequest, bool, error) {
+	return PullRequest{}, false, nil
+}
+func (fakeWriter) CreatePullRequest(context.Context, string, PullRequestSpec) (PullRequest, error) {
+	return PullRequest{}, nil
+}
+func (fakeWriter) UpdatePullRequest(context.Context, string, int, PullRequestSpec) error { return nil }
+func (fakeWriter) SetPullRequestState(context.Context, string, int, PRState) error       { return nil }
+
+func TestPullRequestWriterIsImplementable(t *testing.T) {
+	var w PullRequestWriter = fakeWriter{}
+	if _, ok, err := w.FindPullRequest(context.Background(), "acme/widget", "syncerd/pr/7"); ok || err != nil {
+		t.Fatalf("FindPullRequest = %v, %v", ok, err)
+	}
+}
+
+func TestWriterInterfaceHasNoMergeMethod(t *testing.T) {
+	// A merge at the destination would diverge from the mirrored base
+	// branch, so the capability must not exist to be reached for by
+	// accident. This asserts the shape of the interface itself.
+	if _, ok := any(fakeWriter{}).(interface {
+		MergePullRequest(context.Context, string, int) error
+	}); ok {
+		t.Fatal("the destination writer must not expose a merge")
 	}
 }

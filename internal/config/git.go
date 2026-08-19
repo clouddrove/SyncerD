@@ -124,6 +124,45 @@ type PullRequestsConfig struct {
 	Enabled      bool     `mapstructure:"enabled"`
 	BranchPrefix string   `mapstructure:"branch_prefix"`
 	States       []string `mapstructure:"states"`
+
+	// MirrorObjects recreates each source pull request as a real pull
+	// request at the destination. It also makes every mirrored pull
+	// request get a branch under BranchPrefix, including one whose head
+	// lives in the source repository, so a destination pull request always
+	// has one uniform head name to point at.
+	MirrorObjects bool `mapstructure:"mirror_objects"`
+
+	// The bool pointers distinguish unset from an explicit false, so the
+	// defaults below apply only where the operator said nothing.
+	Comments *bool `mapstructure:"comments"`
+	Reviews  *bool `mapstructure:"reviews"`
+	Labels   *bool `mapstructure:"labels"`
+}
+
+// CommentsOrDefault reports whether discussion and review comments are
+// mirrored. On by default once objects are mirrored: a pull request with no
+// conversation is a poor mirror of one that has a conversation.
+func (p PullRequestsConfig) CommentsOrDefault() bool {
+	if p.Comments == nil {
+		return p.MirrorObjects
+	}
+	return *p.Comments
+}
+
+// ReviewsOrDefault reports whether review verdicts are mirrored as text.
+func (p PullRequestsConfig) ReviewsOrDefault() bool {
+	if p.Reviews == nil {
+		return p.MirrorObjects
+	}
+	return *p.Reviews
+}
+
+// LabelsOrDefault reports whether labels are applied at the destination.
+func (p PullRequestsConfig) LabelsOrDefault() bool {
+	if p.Labels == nil {
+		return true
+	}
+	return *p.Labels
 }
 
 // BranchPrefixOrDefault reports the effective branch prefix.
@@ -321,6 +360,9 @@ func (c *Config) ValidateGitSync() error {
 		// A disabled block is not validated. Its fields have no effect,
 		// and rejecting a stale value in one would block a run that does
 		// not read it.
+		if m.PullRequests.MirrorObjects && !m.PullRequests.Enabled {
+			return fmt.Errorf("git.mirrors[%d].pull_requests.mirror_objects is set but enabled is not; the destination pull request needs the head branch that enabled mirrors", i)
+		}
 		if m.PullRequests.Enabled {
 			if err := vcs.ValidateBranchPrefix(m.PullRequests.BranchPrefixOrDefault()); err != nil {
 				return fmt.Errorf("git.mirrors[%d].pull_requests: %w", i, err)
