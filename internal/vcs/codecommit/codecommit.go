@@ -43,6 +43,21 @@ type api interface {
 	GetRepository(ctx context.Context, in *codecommit.GetRepositoryInput, optFns ...func(*codecommit.Options)) (*codecommit.GetRepositoryOutput, error)
 	CreateRepository(ctx context.Context, in *codecommit.CreateRepositoryInput, optFns ...func(*codecommit.Options)) (*codecommit.CreateRepositoryOutput, error)
 	UpdateDefaultBranch(ctx context.Context, in *codecommit.UpdateDefaultBranchInput, optFns ...func(*codecommit.Options)) (*codecommit.UpdateDefaultBranchOutput, error)
+
+	// Pull request operations. CodeCommit has no combined update and no
+	// reopen, which is why the update surface is two calls and there is no
+	// status call other than closing.
+	ListPullRequests(ctx context.Context, in *codecommit.ListPullRequestsInput, optFns ...func(*codecommit.Options)) (*codecommit.ListPullRequestsOutput, error)
+	GetPullRequest(ctx context.Context, in *codecommit.GetPullRequestInput, optFns ...func(*codecommit.Options)) (*codecommit.GetPullRequestOutput, error)
+	CreatePullRequest(ctx context.Context, in *codecommit.CreatePullRequestInput, optFns ...func(*codecommit.Options)) (*codecommit.CreatePullRequestOutput, error)
+	UpdatePullRequestTitle(ctx context.Context, in *codecommit.UpdatePullRequestTitleInput, optFns ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestTitleOutput, error)
+	UpdatePullRequestDescription(ctx context.Context, in *codecommit.UpdatePullRequestDescriptionInput, optFns ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestDescriptionOutput, error)
+	UpdatePullRequestStatus(ctx context.Context, in *codecommit.UpdatePullRequestStatusInput, optFns ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestStatusOutput, error)
+	GetPullRequestApprovalStates(ctx context.Context, in *codecommit.GetPullRequestApprovalStatesInput, optFns ...func(*codecommit.Options)) (*codecommit.GetPullRequestApprovalStatesOutput, error)
+	GetCommentsForPullRequest(ctx context.Context, in *codecommit.GetCommentsForPullRequestInput, optFns ...func(*codecommit.Options)) (*codecommit.GetCommentsForPullRequestOutput, error)
+	PostCommentForPullRequest(ctx context.Context, in *codecommit.PostCommentForPullRequestInput, optFns ...func(*codecommit.Options)) (*codecommit.PostCommentForPullRequestOutput, error)
+	UpdateComment(ctx context.Context, in *codecommit.UpdateCommentInput, optFns ...func(*codecommit.Options)) (*codecommit.UpdateCommentOutput, error)
+	DeleteCommentContent(ctx context.Context, in *codecommit.DeleteCommentContentInput, optFns ...func(*codecommit.Options)) (*codecommit.DeleteCommentContentOutput, error)
 }
 
 // clientFactory builds the api client. It exists so tests can substitute a
@@ -86,6 +101,8 @@ type Provider struct {
 	gitUsername string
 	gitPassword string
 	factory     clientFactory
+
+	prs prCache
 
 	clientMu sync.Mutex
 	client   api

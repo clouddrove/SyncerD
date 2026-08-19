@@ -61,7 +61,7 @@ func (fakeWriter) CreatePullRequest(context.Context, string, PullRequestSpec) (P
 	return PullRequest{}, nil
 }
 func (fakeWriter) UpdatePullRequest(context.Context, string, int, PullRequestSpec) error { return nil }
-func (fakeWriter) SetPullRequestState(context.Context, string, int, PRState) error       { return nil }
+func (fakeWriter) ClosePullRequest(context.Context, string, int) error                   { return nil }
 
 func TestPullRequestWriterIsImplementable(t *testing.T) {
 	var w PullRequestWriter = fakeWriter{}

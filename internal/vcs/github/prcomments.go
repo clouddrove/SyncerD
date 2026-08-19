@@ -92,16 +92,52 @@ func (p *Provider) ListComments(ctx context.Context, repoPath string, number int
 }
 
 // ListReviewComments returns the comments anchored to lines of the diff.
+//
+// The pull request itself is read first for its base SHA. GitHub does not
+// report one per comment and does not need one, but GitLab refuses to
+// anchor a comment without base, head, and start SHAs, and CodeCommit needs
+// a before commit id. Without this, every inline comment mirrored from
+// GitHub to either of them would silently downgrade to a plain discussion
+// comment.
 func (p *Provider) ListReviewComments(ctx context.Context, repoPath string, number int) ([]vcs.ReviewComment, error) {
 	raw, err := p.listCommentPages(ctx, fmt.Sprintf("%s/repos/%s/pulls/%d/comments?per_page=100", p.apiURL, repoPath, number))
 	if err != nil {
 		return nil, err
 	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	baseSHA, err := p.baseSHA(ctx, repoPath, number)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]vcs.ReviewComment, 0, len(raw))
 	for _, a := range raw {
-		out = append(out, a.toReviewComment())
+		rc := a.toReviewComment()
+		rc.BaseSHA = baseSHA
+		out = append(out, rc)
 	}
 	return out, nil
+}
+
+// baseSHA reports the commit a pull request's diff is measured from.
+func (p *Provider) baseSHA(ctx context.Context, repoPath string, number int) (string, error) {
+	body, _, err := p.do(ctx, http.MethodGet,
+		fmt.Sprintf("%s/repos/%s/pulls/%d", p.apiURL, repoPath, number), nil)
+	if err != nil {
+		return "", err
+	}
+	var pr struct {
+		Base struct {
+			SHA string `json:"sha"`
+		} `json:"base"`
+	}
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return "", fmt.Errorf("github: decode pull request for its base SHA: %w", err)
+	}
+	return pr.Base.SHA, nil
 }
 
 // ListReviews returns the review verdicts on a pull request.

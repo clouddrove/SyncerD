@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/clouddrove/syncerd/internal/logging"
 	"github.com/clouddrove/syncerd/internal/state"
@@ -79,9 +80,21 @@ func syncConversation(ctx context.Context, pr vcs.PullRequest, destNumber int, o
 	}
 
 	// A source comment that has since been deleted takes its mirrored copy
-	// with it, but only the copy SyncerD wrote.
+	// with it, but only the copy SyncerD wrote, and only in a category this
+	// run actually listed.
+	//
+	// That second condition matters: without it, turning comments off would
+	// delete every comment previously mirrored, and turning reviews off
+	// would delete every mirrored verdict, because nothing in those
+	// categories would appear in seen.
 	for sourceID, destID := range rec.CommentIDs {
 		if seen[sourceID] {
+			continue
+		}
+		if isReviewKey(sourceID) && !opts.Reviews {
+			continue
+		}
+		if !isReviewKey(sourceID) && !opts.Comments {
 			continue
 		}
 		if opts.DryRun {
@@ -96,6 +109,12 @@ func syncConversation(ctx context.Context, pr vcs.PullRequest, destNumber int, o
 	}
 
 	return created, downgraded, nil
+}
+
+// isReviewKey reports whether a tracked id belongs to a mirrored review
+// verdict rather than a comment. ComposeReview prefixes those keys.
+func isReviewKey(sourceID string) bool {
+	return strings.HasPrefix(sourceID, "review-")
 }
 
 // upsert posts a comment the first time and rewrites it after that.
