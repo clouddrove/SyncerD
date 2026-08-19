@@ -740,6 +740,34 @@ Only GitHub sources can list pull requests today. A mirror that enables
 
 ---
 
+## Live provider tests
+
+Every other test in this repository checks SyncerD against fakes written by
+whoever wrote the code, and that has already proved insufficient: three
+defects that made pull request mirroring inoperable survived a green suite,
+a passing verification run, and a review of their own change, because the
+fakes agreed with the mistake. A real API does not.
+
+```bash
+export SYNCERD_LIVE_GITHUB_TOKEN=ghp_...   # repo scope
+export SYNCERD_LIVE_GITHUB_OWNER=your-account
+make test-live
+```
+
+It creates two throwaway private repositories named `syncerd-live-*`, seeds
+one with a branch, opens a pull request, mirrors the branches and then the
+pull request to the other, and checks what actually landed: that the
+destination pull request exists and is findable by its head branch, that
+the body carries the marker and no live mention, that a second run changes
+nothing, that a comment mirrors exactly once, and that closing the source
+closes the mirror. Then it deletes both repositories. Set
+`SYNCERD_LIVE_KEEP=1` to leave them behind and look.
+
+Run it before a release that touches provider code. It is the only check
+that would have caught the defects above.
+
+---
+
 ## Cleanup
 
 ```bash

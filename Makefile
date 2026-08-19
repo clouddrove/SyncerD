@@ -1,4 +1,4 @@
-.PHONY: build test clean install lint
+.PHONY: build test test-live clean install lint
 
 # Version info injected at build time
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo dev)
@@ -12,6 +12,17 @@ build:
 # Run tests
 test:
 	go test -v ./...
+
+# Run the live provider tests. These talk to a real GitHub account, create
+# two throwaway repositories, use them, and delete them again. They are the
+# only tests that prove a real API call works: everything else is checked
+# against fakes written by the same hand as the code.
+#
+#   SYNCERD_LIVE_GITHUB_TOKEN=ghp_...   token with repo scope
+#   SYNCERD_LIVE_GITHUB_OWNER=acme      account or org to create under
+#   SYNCERD_LIVE_KEEP=1                 optional, skip cleanup to inspect
+test-live:
+	go test -tags live -v -timeout 15m ./internal/livetest/
 
 # Clean build artifacts
 clean:
