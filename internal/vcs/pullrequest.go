@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -137,3 +138,60 @@ func ValidateBranchPrefix(prefix string) error {
 func PRBranch(prefix string, number int) string {
 	return fmt.Sprintf("%s/%d", prefix, number)
 }
+
+// PullRequestSpec is what a destination needs to create or update a pull
+// request. Body already carries the marker and attribution header composed
+// by the caller, so a provider writes it verbatim and never composes it
+// itself.
+type PullRequestSpec struct {
+	Title      string
+	Body       string
+	HeadBranch string
+	BaseBranch string
+	Draft      bool
+	Labels     []string
+}
+
+// PullRequestWriter creates and maintains pull requests at a destination.
+//
+// There is deliberately no merge method. A merge performed at the
+// destination creates a merge commit there, while the ref mirror pushes the
+// source's own merge commit onto the same base branch: two different
+// commits, after which the destination's history diverges and the next
+// mirror push force overwrites what its UI reported as merged. A merged
+// source pull request closes the destination one instead.
+type PullRequestWriter interface {
+	// FindPullRequest locates a pull request by its head branch, which is
+	// unique per source pull request. It is what lets a run recover after
+	// its state file is lost, without creating a duplicate.
+	FindPullRequest(ctx context.Context, repoPath, headBranch string) (PullRequest, bool, error)
+	CreatePullRequest(ctx context.Context, repoPath string, spec PullRequestSpec) (PullRequest, error)
+	UpdatePullRequest(ctx context.Context, repoPath string, number int, spec PullRequestSpec) error
+	// SetPullRequestState opens or closes a pull request. PRMerged is
+	// treated as closed, for the reason given on the interface.
+	SetPullRequestState(ctx context.Context, repoPath string, number int, state PRState) error
+}
+
+// PullRequestConversation reads and writes the discussion around a pull
+// request. It is separate from PullRequestWriter so a provider can support
+// pull request objects before its comment model is mapped.
+type PullRequestConversation interface {
+	ListComments(ctx context.Context, repoPath string, number int) ([]Comment, error)
+	ListReviewComments(ctx context.Context, repoPath string, number int) ([]ReviewComment, error)
+	ListReviews(ctx context.Context, repoPath string, number int) ([]Review, error)
+
+	// CreateComment posts a discussion comment and returns its id at the
+	// destination.
+	CreateComment(ctx context.Context, repoPath string, number int, body string) (string, error)
+	UpdateComment(ctx context.Context, repoPath, commentID, body string) error
+	DeleteComment(ctx context.Context, repoPath, commentID string) error
+	// CreateReviewComment posts a comment anchored to a line of the diff.
+	// A destination that refuses the anchor returns ErrAnchorRejected, so
+	// the caller can downgrade to a discussion comment rather than drop it.
+	CreateReviewComment(ctx context.Context, repoPath string, number int, rc ReviewComment) (string, error)
+}
+
+// ErrAnchorRejected reports that a destination refused to anchor a review
+// comment to the given file and line, which happens when the line is not
+// part of the destination pull request's diff.
+var ErrAnchorRejected = errors.New("destination rejected the review comment anchor")
