@@ -486,3 +486,158 @@ func TestRecordedDivergenceIsNotRetriedEveryRun(t *testing.T) {
 		t.Error("a divergence SyncerD cannot fix must not cost a write on every run")
 	}
 }
+
+// strictDest fails the test if a closed pull request is updated, which is
+// what Bitbucket and CodeCommit do in production: both reject an update to
+// a pull request that is no longer open.
+type strictDest struct {
+	inner  *fakeDest
+	closed map[int]bool
+}
+
+func newStrictDest(t *testing.T) *strictDest {
+	return &strictDest{inner: newFakeDest(t), closed: map[int]bool{}}
+}
+
+func (s *strictDest) FindPullRequest(ctx context.Context, repo, head string) (vcs.PullRequest, bool, error) {
+	return s.inner.FindPullRequest(ctx, repo, head)
+}
+func (s *strictDest) CreatePullRequest(ctx context.Context, repo string, spec vcs.PullRequestSpec) (vcs.PullRequest, error) {
+	return s.inner.CreatePullRequest(ctx, repo, spec)
+}
+func (s *strictDest) UpdatePullRequest(ctx context.Context, repo string, number int, spec vcs.PullRequestSpec) error {
+	if s.closed[number] {
+		return errors.New("PullRequestAlreadyClosedException")
+	}
+	return s.inner.UpdatePullRequest(ctx, repo, number, spec)
+}
+func (s *strictDest) ClosePullRequest(ctx context.Context, repo string, number int) error {
+	s.closed[number] = true
+	return s.inner.ClosePullRequest(ctx, repo, number)
+}
+
+func TestDivergentPullRequestIsNotUpdatedAndIsRecordedOnce(t *testing.T) {
+	dest := newStrictDest(t)
+	opts := baseOpts(t, dest.inner)
+	opts.Dest = dest
+
+	pr := openPR(7, time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	// Someone closes the mirror at a destination that cannot reopen.
+	rec, _ := opts.State.GetPR("gh-to-gh", "acme/widget", 7)
+	dest.closed[rec.DestNumber] = true
+	dest.inner.existing["syncerd/pr/7"] = vcs.PullRequest{Number: rec.DestNumber, State: vcs.PRClosed, HeadBranch: "syncerd/pr/7"}
+	rec.DestState = string(vcs.PRClosed)
+	opts.State.MarkPR("gh-to-gh", "acme/widget", 7, rec)
+
+	pr.UpdatedAt = pr.UpdatedAt.Add(time.Hour)
+	res, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts)
+	if err != nil {
+		t.Fatalf("an unfixable divergence must not fail the run: %v", err)
+	}
+	if len(res.Failures) != 0 {
+		t.Fatalf("unexpected failures: %v", res.Failures)
+	}
+
+	rec, _ = opts.State.GetPR("gh-to-gh", "acme/widget", 7)
+	if rec.DestState != destStateDivergent {
+		t.Fatalf("the divergence must be recorded, DestState = %q", rec.DestState)
+	}
+
+	// And again on the next run: still no failure, still no write.
+	pr.UpdatedAt = pr.UpdatedAt.Add(time.Hour)
+	res, err = Sync(context.Background(), []vcs.PullRequest{pr}, opts)
+	if err != nil || len(res.Failures) != 0 {
+		t.Fatalf("a recorded divergence must stay quiet, err=%v failures=%v", err, res.Failures)
+	}
+	if res.Updated != 0 {
+		t.Errorf("Updated = %d, want 0", res.Updated)
+	}
+}
+
+func TestDivergenceIsClearedWhenSomebodyReopensTheDestination(t *testing.T) {
+	dest := newStrictDest(t)
+	opts := baseOpts(t, dest.inner)
+	opts.Dest = dest
+
+	pr := openPR(7, time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	rec, _ := opts.State.GetPR("gh-to-gh", "acme/widget", 7)
+	rec.DestState = destStateDivergent
+	opts.State.MarkPR("gh-to-gh", "acme/widget", 7, rec)
+
+	// A human reopens it at the destination, which is the only way out.
+	dest.inner.existing["syncerd/pr/7"] = vcs.PullRequest{Number: rec.DestNumber, State: vcs.PROpen, HeadBranch: "syncerd/pr/7"}
+
+	pr.UpdatedAt = pr.UpdatedAt.Add(time.Hour)
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+
+	rec, _ = opts.State.GetPR("gh-to-gh", "acme/widget", 7)
+	if rec.DestState == destStateDivergent {
+		t.Error("a destination that was reopened by hand must clear the divergence")
+	}
+	if rec.DestState != string(vcs.PROpen) {
+		t.Errorf("DestState = %q, want open", rec.DestState)
+	}
+}
+
+func TestClosedDestinationIsNotUpdatedWhenTheSourceGainsActivity(t *testing.T) {
+	dest := newStrictDest(t)
+	opts := baseOpts(t, dest.inner)
+	opts.Dest = dest
+
+	pr := openPR(7, time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC))
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	// The source merges, so the destination closes.
+	merged := pr
+	merged.State = vcs.PRMerged
+	merged.UpdatedAt = pr.UpdatedAt.Add(time.Hour)
+	if _, err := Sync(context.Background(), []vcs.PullRequest{merged}, opts); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+
+	// Someone comments on the merged source, so its timestamp advances.
+	merged.UpdatedAt = merged.UpdatedAt.Add(time.Hour)
+	res, err := Sync(context.Background(), []vcs.PullRequest{merged}, opts)
+	if err != nil {
+		t.Fatalf("activity on a finished pull request must not fail: %v", err)
+	}
+	if len(res.Failures) != 0 {
+		t.Fatalf("unexpected failures: %v", res.Failures)
+	}
+}
+
+func TestASourceWithNoUpdateTimestampIsNeverFrozen(t *testing.T) {
+	dest := newFakeDest(t)
+	opts := baseOpts(t, dest)
+
+	// Azure DevOps reports no update timestamp, so the model carries a zero
+	// time. Watermarking on that would mirror the pull request once and
+	// never again.
+	pr := openPR(7, time.Time{})
+	if _, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	pr.Title = "Add login, edited at the source"
+	res, err := Sync(context.Background(), []vcs.PullRequest{pr}, opts)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.Updated != 1 {
+		t.Fatalf("a source with no timestamp must be reconciled every run, Updated = %d", res.Updated)
+	}
+	if dest.updated[len(dest.updated)-1].Title != "Add login, edited at the source" {
+		t.Error("the edit did not reach the destination")
+	}
+}
