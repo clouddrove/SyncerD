@@ -21,7 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A failed state save on the fail-fast path was silent, so everything copied before the abort was copied again on the next run with no explanation
 - `git-sync` could not authenticate to Azure DevOps over git in `pat` mode, fixed in v0.2.1 and described there
 
+### Fixed
+- A mirrored pull request with no labels failed to update, taking the whole pull request with it. Once the mirror owned labels, an empty set was sent as null rather than as an empty array, and GitHub rejects that with 422. Most pull requests carry no labels, so this affected most of them. Found by the live suite on its first real run
+
+### Added
+- A live provider test suite behind the `live` build tag, run with `make test-live`. It creates two throwaway repositories against a real GitHub account, mirrors a pull request between them, and checks what actually landed, then deletes them. Every other test in the repository checks SyncerD against fakes written alongside the code, which is how three defects that made pull request mirroring inoperable passed a green suite and a review
+
 ### Security
+- Cleared two advisories in transitive Go modules, an infinite loop in `golang.org/x/text` and an out of bounds read in `klauspost/compress`. Neither was reachable from SyncerD's own code, but both had fixes and a later change could have started calling them
 - Patched a high severity advisory in `brace-expansion`, which the Azure DevOps extension pinned to exactly the affected version through an `overrides` entry
 
 ## [0.2.1] - 2026-08-19

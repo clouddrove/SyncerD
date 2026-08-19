@@ -134,6 +134,12 @@ func (p *Provider) setState(ctx context.Context, repoPath string, number int, st
 // that does not exist yet as a side effect of this call, so no separate
 // creation step is needed.
 func (p *Provider) setLabels(ctx context.Context, repoPath string, number int, labels []string) error {
+	// A nil slice marshals to null, and GitHub answers 422 for it: the
+	// field must be an array. Clearing the labels is a legitimate request,
+	// and it is the common one, since most pull requests carry none.
+	if labels == nil {
+		labels = []string{}
+	}
 	payload := map[string]any{"labels": labels}
 	_, _, err := p.do(ctx, http.MethodPut,
 		fmt.Sprintf("%s/repos/%s/issues/%d/labels", p.apiURL, repoPath, number), payload)
