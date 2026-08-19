@@ -268,3 +268,48 @@ func TestNewSyncerRecordsDryRun(t *testing.T) {
 		t.Error("the engine must be told it is a dry run")
 	}
 }
+
+func TestBuildMirrorsWiresPullRequests(t *testing.T) {
+	cfg := buildableConfig()
+	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true}
+
+	mirrors, _, err := BuildMirrors(cfg)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	m := mirrors[0]
+	if !m.PullRequests.Enabled {
+		t.Error("PullRequests.Enabled was not carried through")
+	}
+	if m.PullRequests.BranchPrefix != "syncerd/pr" {
+		t.Errorf("BranchPrefix = %q, want the default syncerd/pr", m.PullRequests.BranchPrefix)
+	}
+	if m.SourcePRs == nil {
+		t.Error("a GitHub source implements vcs.PullRequestLister and must be wired")
+	}
+}
+
+func TestBuildMirrorsRejectsAPullRequestSourceThatCannotList(t *testing.T) {
+	cfg := buildableConfig()
+	cfg.Mirrors[0].Source = "gl"
+	cfg.Mirrors[0].Destination = "gh"
+	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true}
+
+	_, _, err := BuildMirrors(cfg)
+	if err == nil || !strings.Contains(err.Error(), "pull_requests") {
+		t.Fatalf("expected an error naming pull_requests, got %v", err)
+	}
+}
+
+func TestBuildMirrorsLeavesPullRequestsOffByDefault(t *testing.T) {
+	mirrors, _, err := BuildMirrors(buildableConfig())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if mirrors[0].PullRequests.Enabled {
+		t.Error("a mirror with no pull_requests block must not enable pull request sync")
+	}
+	if mirrors[0].SourcePRs != nil {
+		t.Error("a mirror with no pull_requests block must not wire a lister")
+	}
+}

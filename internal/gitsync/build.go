@@ -136,6 +136,18 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 			return nil, nil, fmt.Errorf("mirror %q: %w", mc.Name, err)
 		}
 
+		// A source that cannot list pull requests is refused rather than
+		// quietly mirroring branches only: the operator asked for pull
+		// request heads, and a run that silently omits them looks like a
+		// working mirror.
+		var sourcePRs vcs.PullRequestLister
+		if mc.PullRequests.Enabled {
+			sourcePRs, ok = src.(vcs.PullRequestLister)
+			if !ok {
+				return nil, nil, fmt.Errorf("mirror %q: pull_requests is enabled but source provider %q (type %q) cannot list pull requests; GitHub is supported today and the remaining provider types arrive in a later release", mc.Name, mc.Source, src.Type())
+			}
+		}
+
 		mirrors = append(mirrors, Mirror{
 			Name:         mc.Name,
 			Source:       lister,
@@ -153,6 +165,11 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 			Adopt:         mc.Adopt,
 			CreateMissing: mc.CreateMissingOrDefault(),
 			Visibility:    mc.Visibility,
+			SourcePRs:     sourcePRs,
+			PullRequests: PRSyncConfig{
+				Enabled:      mc.PullRequests.Enabled,
+				BranchPrefix: mc.PullRequests.BranchPrefixOrDefault(),
+			},
 		})
 	}
 
