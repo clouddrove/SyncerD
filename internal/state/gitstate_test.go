@@ -1,8 +1,10 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestGitStateMarkAndGet(t *testing.T) {
@@ -91,5 +93,69 @@ func TestGitStateSaveIsAtomic(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("temp file left behind: %v", entries)
+	}
+}
+
+func TestPullRequestRecordRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "git-state.json")
+
+	s := NewGit()
+	s.MarkPR("gh-to-gl", "acme/widget", 7, PRRecord{
+		DestNumber:    12,
+		DestState:     "open",
+		SourceUpdated: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC),
+		CommentIDs:    map[string]string{"991": "551"},
+	})
+	if err := s.Save(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := LoadGit(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	rec, ok := loaded.GetPR("gh-to-gl", "acme/widget", 7)
+	if !ok {
+		t.Fatal("record did not survive the round trip")
+	}
+	if rec.DestNumber != 12 || rec.DestState != "open" {
+		t.Errorf("record = %+v", rec)
+	}
+	if rec.CommentIDs["991"] != "551" {
+		t.Errorf("comment map lost: %+v", rec.CommentIDs)
+	}
+	if !rec.SourceUpdated.Equal(time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)) {
+		t.Errorf("SourceUpdated = %v", rec.SourceUpdated)
+	}
+}
+
+func TestStateFileWithoutPullRequestsLoads(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old-state.json")
+	// A file written before pull request mirroring existed.
+	body := `{"version":1,"mirrored":{"m":{"acme/widget":{"fingerprint":"abc","dest_path":"widget"}}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	loaded, err := LoadGit(path)
+	if err != nil {
+		t.Fatalf("an older state file must still load: %v", err)
+	}
+	if _, ok := loaded.GetPR("m", "acme/widget", 1); ok {
+		t.Error("there should be no pull request records")
+	}
+	if _, ok := loaded.Get("m", "acme/widget"); !ok {
+		t.Error("the existing repository state must survive")
+	}
+}
+
+func TestForgetPRCausesReinspection(t *testing.T) {
+	s := NewGit()
+	s.MarkPR("m", "acme/widget", 7, PRRecord{DestNumber: 3})
+	s.ForgetPR("m", "acme/widget", 7)
+	if _, ok := s.GetPR("m", "acme/widget", 7); ok {
+		t.Error("the record should be gone")
 	}
 }
