@@ -699,3 +699,33 @@ func TestPrunePRBranchesOnACacheWithNoPRBranches(t *testing.T) {
 		t.Errorf("deleted = %d, want 0", deleted)
 	}
 }
+
+func TestValidateCredentialRejectsAPasswordWithNoUsername(t *testing.T) {
+	// This is what an Azure DevOps PAT credential used to look like. The
+	// helper would print "username=", git would read that as no username,
+	// and the clone would fail with "could not read Username", which names
+	// nothing useful. Fail where the cause can be named instead.
+	err := validateCredential(vcs.GitCredential{Kind: vcs.CredBasic, Secret: "a-token"})
+	if err == nil {
+		t.Fatal("a basic credential with no username cannot authenticate and must be rejected")
+	}
+	if !strings.Contains(err.Error(), "empty username") {
+		t.Errorf("the error should name the cause, got %v", err)
+	}
+}
+
+func TestValidateCredentialAllowsNoCredentialAtAll(t *testing.T) {
+	// A local path needs no credential; that is not the same as a password
+	// with a missing username.
+	if err := validateCredential(vcs.GitCredential{}); err != nil {
+		t.Fatalf("an empty credential is valid: %v", err)
+	}
+}
+
+func TestValidateCredentialAllowsABearerWithoutAUsername(t *testing.T) {
+	// Entra mode carries the token in an Authorization header, so there is
+	// no username to supply.
+	if err := validateCredential(vcs.GitCredential{Kind: vcs.CredBearer, Secret: "entra-token"}); err != nil {
+		t.Fatalf("a bearer credential needs no username: %v", err)
+	}
+}

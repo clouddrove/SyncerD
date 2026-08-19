@@ -334,6 +334,14 @@ func rejectURLCredentials(raw string) error {
 // newline silently truncates the value and turns the remainder into a
 // separate directive.
 func validateCredential(cred vcs.GitCredential) error {
+	// A basic credential with a secret and no username cannot authenticate.
+	// The helper would print "username=", git would read that as no
+	// username, and with prompts disabled the operation fails with "could
+	// not read Username", which says nothing about the provider that
+	// produced it. Fail here instead, where the cause is nameable.
+	if cred.Kind == vcs.CredBasic && cred.Secret != "" && cred.User == "" {
+		return fmt.Errorf("provider supplied a password with no username; git cannot authenticate with an empty username")
+	}
 	if strings.ContainsAny(cred.Secret, "\n\r") {
 		return fmt.Errorf("credential secret contains a newline, which git would read as a protocol directive")
 	}
