@@ -141,11 +141,21 @@ func (p *Provider) CloneURL(name string) string {
 // GitCredential returns the credential git should present, matching the
 // configured auth mode.
 //
-// pat mode returns HTTP basic auth with an empty username and the PAT as
-// the password, which is what Azure DevOps expects. entra mode returns a
-// bearer credential carrying the operator supplied Entra access token. If
-// entra mode is configured but no token was ever supplied, this returns an
-// error rather than presenting an empty bearer token to git.
+// pat mode returns HTTP basic auth with the PAT as the password. Azure
+// DevOps ignores the username on this path and authenticates on the token
+// alone, so the value is free; the organisation name is used because it
+// makes the credential legible without being a secret.
+//
+// It must not be empty, which is what it used to be. SyncerD hands git its
+// credential through a helper that prints "username=<value>", and git reads
+// an empty value as no username at all: it then tries to ask, terminal
+// prompts are disabled, and the clone fails with "could not read Username"
+// rather than anything pointing at the configuration.
+//
+// entra mode returns a bearer credential carrying the operator supplied
+// Entra access token. If entra mode is configured but no token was ever
+// supplied, this returns an error rather than presenting an empty bearer
+// token to git.
 func (p *Provider) GitCredential(context.Context) (vcs.GitCredential, error) {
 	if p.auth == authEntra {
 		if p.token == "" {
@@ -153,7 +163,7 @@ func (p *Provider) GitCredential(context.Context) (vcs.GitCredential, error) {
 		}
 		return vcs.GitCredential{Kind: vcs.CredBearer, Secret: p.token}, nil
 	}
-	return vcs.GitCredential{Kind: vcs.CredBasic, User: "", Secret: p.token}, nil
+	return vcs.GitCredential{Kind: vcs.CredBasic, User: p.org, Secret: p.token}, nil
 }
 
 // apiRepo is the subset of the Azure DevOps repository object SyncerD

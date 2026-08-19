@@ -311,8 +311,15 @@ func TestPATModeGitCredential(t *testing.T) {
 	if cred.Kind != vcs.CredBasic {
 		t.Errorf("Kind = %v, want CredBasic", cred.Kind)
 	}
-	if cred.User != "" {
-		t.Errorf("User = %q, want empty", cred.User)
+	// Azure DevOps ignores the username and authenticates on the PAT alone,
+	// but it cannot be empty: SyncerD's credential helper prints
+	// "username=<value>", and git reads an empty value as no username,
+	// then fails with "could not read Username" because prompts are off.
+	if cred.User == "" {
+		t.Error("User must not be empty; git cannot authenticate without one")
+	}
+	if cred.User != "acme-org" {
+		t.Errorf("User = %q, want the organisation name", cred.User)
 	}
 	if cred.Secret != "pat-test-token" {
 		t.Errorf("Secret = %q, want the PAT", cred.Secret)
