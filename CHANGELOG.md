@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pull request mirroring now works for every provider type, in any direction: GitLab, Bitbucket Cloud, Azure DevOps, and AWS CodeCommit join GitHub. Each maps onto the same model, and the runbook carries a table of what each provider cannot represent
+- CodeCommit is in scope after all. It was excluded when the work was planned on the grounds that it had no pull request API worth mirroring, which was wrong: it has a full one, already present in the pinned SDK, and AWS returned the service to general availability on 2025-11-24 after closing it to new customers in 2024
+
+### Changed
+- `vcs.PullRequestWriter` closes a pull request but no longer reopens one. Bitbucket Cloud has no reopen endpoint and CodeCommit permits only the `OPEN` to `CLOSED` transition, so reopening is now an optional `vcs.PullRequestReopener` capability. A destination that lacks it leaves the pull request closed, warns once, and records the divergence rather than opening a second pull request for the same work or retrying on every run
+- `vcs.ReviewComment` carries `BaseSHA` alongside `CommitSHA`: GitLab refuses to anchor an inline comment without base, head, and start SHAs, and CodeCommit needs a before and after commit id. A source that cannot supply them downgrades the comment to a discussion comment rather than dropping it
+
 ## [0.2.0] - 2026-08-19
 
 ### Added

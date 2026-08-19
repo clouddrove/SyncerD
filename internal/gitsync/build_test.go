@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/clouddrove/syncerd/internal/config"
+	"github.com/clouddrove/syncerd/internal/vcs"
 )
 
 func buildableConfig() *config.GitConfig {
@@ -289,15 +290,82 @@ func TestBuildMirrorsWiresPullRequests(t *testing.T) {
 	}
 }
 
-func TestBuildMirrorsRejectsAPullRequestSourceThatCannotList(t *testing.T) {
-	cfg := buildableConfig()
-	cfg.Mirrors[0].Source = "gl"
-	cfg.Mirrors[0].Destination = "gh"
-	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true}
+// prCapableProviders is every provider type that can mirror pull requests.
+// All five can, since P3; the table exists so a regression in any one of
+// them fails here rather than at run time in somebody's mirror.
+var prCapableProviders = []config.GitProviderConfig{
+	{Name: "p-github", Type: "github", Owner: "acme", Token: "ghp_token_value"},
+	{Name: "p-gitlab", Type: "gitlab", Owner: "acme", Token: "glpat_token_value"},
+	{Name: "p-bitbucket", Type: "bitbucket", Owner: "acme", Email: "svc@acme.com", Token: "bb_token_value"},
+	{Name: "p-azuredevops", Type: "azuredevops", Owner: "acme", Project: "proj", Token: "ado_token_value"},
+	{Name: "p-codecommit", Type: "codecommit", Region: "us-east-1", GitUsername: "u", GitPassword: "p"},
+}
 
-	_, _, err := BuildMirrors(cfg)
-	if err == nil || !strings.Contains(err.Error(), "pull_requests") {
-		t.Fatalf("expected an error naming pull_requests, got %v", err)
+func TestEveryProviderTypeCanMirrorPullRequests(t *testing.T) {
+	for _, src := range prCapableProviders {
+		for _, dst := range prCapableProviders {
+			if src.Name == dst.Name {
+				continue
+			}
+			t.Run(src.Type+"-to-"+dst.Type, func(t *testing.T) {
+				cfg := &config.GitConfig{
+					Providers: prCapableProviders,
+					Mirrors: []config.MirrorConfig{{
+						Name: "m", Source: src.Name, Destination: dst.Name,
+						PullRequests: config.PullRequestsConfig{Enabled: true, MirrorObjects: true},
+					}},
+				}
+				cfg.ApplyDefaults()
+
+				mirrors, _, err := BuildMirrors(cfg)
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				m := mirrors[0]
+				if m.SourcePRs == nil {
+					t.Error("source lister not wired")
+				}
+				if m.DestPRs == nil {
+					t.Error("destination writer not wired")
+				}
+				if m.SourceConv == nil || m.DestConv == nil {
+					t.Error("conversation endpoints not wired")
+				}
+			})
+		}
+	}
+}
+
+func TestOnlySomeDestinationsCanReopen(t *testing.T) {
+	// Bitbucket has no reopen endpoint and CodeCommit forbids the
+	// transition, so the engine must see the capability absent on exactly
+	// those two and present on the rest.
+	want := map[string]bool{
+		"github": true, "gitlab": true, "azuredevops": true,
+		"bitbucket": false, "codecommit": false,
+	}
+
+	for _, dst := range prCapableProviders {
+		cfg := &config.GitConfig{
+			Providers: prCapableProviders,
+			Mirrors: []config.MirrorConfig{{
+				Name: "m", Source: "p-github", Destination: dst.Name,
+				PullRequests: config.PullRequestsConfig{Enabled: true, MirrorObjects: true},
+			}},
+		}
+		if dst.Name == "p-github" {
+			cfg.Mirrors[0].Source = "p-gitlab"
+		}
+		cfg.ApplyDefaults()
+
+		mirrors, _, err := BuildMirrors(cfg)
+		if err != nil {
+			t.Fatalf("%s: build: %v", dst.Type, err)
+		}
+		_, canReopen := mirrors[0].DestPRs.(vcs.PullRequestReopener)
+		if canReopen != want[dst.Type] {
+			t.Errorf("%s reopen capability = %v, want %v", dst.Type, canReopen, want[dst.Type])
+		}
 	}
 }
 
@@ -316,7 +384,6 @@ func TestBuildMirrorsLeavesPullRequestsOffByDefault(t *testing.T) {
 
 func TestBuildMirrorsWiresPullRequestObjects(t *testing.T) {
 	cfg := buildableConfig()
-	// GitHub on both ends: the only pair that can write pull requests today.
 	cfg.Mirrors[0].Destination = "gh2"
 	cfg.Providers = append(cfg.Providers, config.GitProviderConfig{
 		Name: "gh2", Type: "github", Owner: "mirror", Token: "ghp_token_value_two",
@@ -339,15 +406,5 @@ func TestBuildMirrorsWiresPullRequestObjects(t *testing.T) {
 	}
 	if !m.PullRequests.Comments || !m.PullRequests.Reviews || !m.PullRequests.Labels {
 		t.Errorf("switches = %+v", m.PullRequests)
-	}
-}
-
-func TestBuildMirrorsRejectsADestinationThatCannotWritePullRequests(t *testing.T) {
-	cfg := buildableConfig()
-	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true, MirrorObjects: true}
-
-	_, _, err := BuildMirrors(cfg)
-	if err == nil || !strings.Contains(err.Error(), "mirror_objects") {
-		t.Fatalf("a GitLab destination cannot write pull requests yet, want that error, got %v", err)
 	}
 }

@@ -671,8 +671,45 @@ person at the destination is left alone, even though the source is the
 authority: the source is authority over what it published, not over what
 somebody else said.
 
-Today this needs GitHub on both ends. Any other destination is rejected at
-startup.
+### What survives the crossing
+
+Every provider type can mirror pull requests, in any direction. They do not
+agree on what a pull request has, so some things are approximated and some
+are lost. This table is the whole of it:
+
+| | GitHub | GitLab | Bitbucket | Azure DevOps | CodeCommit |
+|---|---|---|---|---|---|
+| Reopen a closed mirror | yes | yes | **no** | yes | **no** |
+| Draft | yes | via a `Draft:` title prefix | yes | on create only | **no** |
+| Labels | yes | yes | **no** | yes | **no** |
+| Inline comment anchors | yes | needs the source to report commit SHAs | yes | yes | yes |
+| Comment deletion | removed | removed | removed | **tombstone** | **content blanked** |
+
+Nothing here fails a run. A capability the destination lacks is logged and
+skipped, never faked:
+
+- **Reopen.** Bitbucket has no reopen endpoint and CodeCommit permits only
+  `OPEN` to `CLOSED`. A destination pull request closed by hand while its
+  source is still open stays closed, and SyncerD warns once and records the
+  divergence rather than opening a second pull request for the same work or
+  retrying forever.
+- **Draft.** GitLab has no draft field, so a draft is expressed by prefixing
+  the title with `Draft:`, and the prefix is stripped when the source leaves
+  draft. This is the one place SyncerD does not copy a title verbatim.
+  CodeCommit ignores the flag.
+- **Labels.** Ignored on Bitbucket and CodeCommit, which have none.
+- **Inline comments.** GitLab and CodeCommit refuse to anchor a comment
+  without commit SHAs. When the source did not report them, the comment is
+  posted as a discussion comment naming the file and line instead of being
+  dropped.
+- **Deletion.** Azure DevOps and CodeCommit delete softly, so a comment
+  deleted at the source leaves a tombstone or an empty comment rather than
+  disappearing.
+
+CodeCommit is also the expensive one: its API returns pull request ids
+only, so each listing costs one extra call per pull request, and it cannot
+search by branch at all, so SyncerD enumerates once per repository per run
+and matches locally.
 
 **Read this before enabling it.** A fork pull request head is code written by
 anyone who can open a pull request against the source. Turning this on pushes

@@ -144,7 +144,7 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 		if mc.PullRequests.Enabled {
 			sourcePRs, ok = src.(vcs.PullRequestLister)
 			if !ok {
-				return nil, nil, fmt.Errorf("mirror %q: pull_requests is enabled but source provider %q (type %q) cannot list pull requests; GitHub is supported today and the remaining provider types arrive in a later release", mc.Name, mc.Source, src.Type())
+				return nil, nil, fmt.Errorf("mirror %q: pull_requests is enabled but source provider %q (type %q) cannot list pull requests", mc.Name, mc.Source, src.Type())
 			}
 		}
 
@@ -157,16 +157,16 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 		if mc.PullRequests.MirrorObjects {
 			destPRs, ok = dst.(vcs.PullRequestWriter)
 			if !ok {
-				return nil, nil, fmt.Errorf("mirror %q: pull_requests.mirror_objects is set but destination provider %q (type %q) cannot write pull requests; GitHub is supported today and the remaining provider types arrive in a later release", mc.Name, mc.Destination, dst.Type())
+				return nil, nil, fmt.Errorf("mirror %q: pull_requests.mirror_objects is set but destination provider %q (type %q) cannot write pull requests", mc.Name, mc.Destination, dst.Type())
 			}
 			if mc.PullRequests.CommentsOrDefault() || mc.PullRequests.ReviewsOrDefault() {
 				sourceConv, ok = src.(vcs.PullRequestConversation)
 				if !ok {
-					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but source provider %q (type %q) cannot read them; set comments: false and reviews: false, or wait for that provider", mc.Name, mc.Source, src.Type())
+					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but source provider %q (type %q) cannot read them; set comments: false and reviews: false", mc.Name, mc.Source, src.Type())
 				}
 				destConv, ok = dst.(vcs.PullRequestConversation)
 				if !ok {
-					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but destination provider %q (type %q) cannot write them; set comments: false and reviews: false, or wait for that provider", mc.Name, mc.Destination, dst.Type())
+					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but destination provider %q (type %q) cannot write them; set comments: false and reviews: false", mc.Name, mc.Destination, dst.Type())
 				}
 			}
 		}
