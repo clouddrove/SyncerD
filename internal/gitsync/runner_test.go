@@ -533,3 +533,169 @@ func TestValidateCredentialRejectsNewline(t *testing.T) {
 func testWriteFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o600)
 }
+
+// newForkRepo returns a bare repository holding one commit on branch
+// "feature" whose history is unrelated to newSourceRepo's, which is what a
+// fork based pull request head looks like from the mirror's side.
+func newForkRepo(t *testing.T, branch, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	work := filepath.Join(root, "fork-work")
+	bare := filepath.Join(root, "fork.git")
+
+	git(t, root, "init", "--bare", "--initial-branch="+branch, bare)
+	git(t, root, "init", "--initial-branch="+branch, work)
+	if err := testWriteFile(filepath.Join(work, "fork.txt"), content); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	git(t, work, "add", ".")
+	git(t, work, "commit", "-m", "fork commit "+content)
+	git(t, work, "remote", "add", "origin", bare)
+	git(t, work, "push", "origin", branch)
+
+	return bare
+}
+
+func TestFetchPRHeadCreatesABranchFromAHeadRef(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(NewRedactor())
+
+	source := newSourceRepo(t)
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+	// Publish the commit under a hidden style ref, the way a provider
+	// exposes a pull request head.
+	git(t, source, "update-ref", "refs/pull/7/head", sha)
+
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	if err := r.SyncCache(ctx, source, cache, noCred); err != nil {
+		t.Fatalf("sync cache: %v", err)
+	}
+
+	if err := r.FetchPRHead(ctx, cache, source, "refs/pull/7/head", "syncerd/pr/7", noCred); err != nil {
+		t.Fatalf("fetch pull request head: %v", err)
+	}
+
+	got := strings.TrimSpace(git(t, cache, "rev-parse", "refs/heads/syncerd/pr/7"))
+	if got != sha {
+		t.Errorf("refs/heads/syncerd/pr/7 = %q, want %q", got, sha)
+	}
+}
+
+func TestFetchPRHeadReadsAForkBranch(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(NewRedactor())
+
+	source := newSourceRepo(t)
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	if err := r.SyncCache(ctx, source, cache, noCred); err != nil {
+		t.Fatalf("sync cache: %v", err)
+	}
+
+	if err := r.FetchPRHead(ctx, cache, fork, "refs/heads/feature", "syncerd/pr/7", noCred); err != nil {
+		t.Fatalf("fetch fork head: %v", err)
+	}
+
+	got := strings.TrimSpace(git(t, cache, "rev-parse", "refs/heads/syncerd/pr/7"))
+	if got != forkSHA {
+		t.Errorf("fork head not fetched: got %q, want %q", got, forkSHA)
+	}
+	// The fork must not survive as a remote: a later run would then fetch
+	// from it as if it were the source.
+	remotes := git(t, cache, "remote")
+	if strings.Contains(remotes, "fork") {
+		t.Errorf("fetching a fork head must not add a remote, got %q", remotes)
+	}
+}
+
+func TestFetchPRHeadForceUpdatesARebasedHead(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(NewRedactor())
+
+	source := newSourceRepo(t)
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	if err := r.SyncCache(ctx, source, cache, noCred); err != nil {
+		t.Fatalf("sync cache: %v", err)
+	}
+
+	first := newForkRepo(t, "feature", "one")
+	if err := r.FetchPRHead(ctx, cache, first, "refs/heads/feature", "syncerd/pr/7", noCred); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+
+	// A rebase replaces the head with a commit that is not a descendant of
+	// the one before it.
+	second := newForkRepo(t, "feature", "two")
+	secondSHA := strings.TrimSpace(git(t, second, "rev-parse", "refs/heads/feature"))
+	if err := r.FetchPRHead(ctx, cache, second, "refs/heads/feature", "syncerd/pr/7", noCred); err != nil {
+		t.Fatalf("a rebased head must be force updated: %v", err)
+	}
+
+	got := strings.TrimSpace(git(t, cache, "rev-parse", "refs/heads/syncerd/pr/7"))
+	if got != secondSHA {
+		t.Errorf("head not updated: got %q, want %q", got, secondSHA)
+	}
+}
+
+func TestFetchPRHeadRejectsCredentialsInTheURL(t *testing.T) {
+	err := NewRunner(NewRedactor()).FetchPRHead(context.Background(), t.TempDir(),
+		"https://user:pass@github.com/acme/widget.git", "refs/heads/x", "syncerd/pr/1", noCred)
+	if err == nil || !strings.Contains(err.Error(), "embedded credentials") {
+		t.Fatalf("expected an embedded credentials error, got %v", err)
+	}
+}
+
+func TestPrunePRBranchesDeletesOnlyUnwantedBranchesUnderThePrefix(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(NewRedactor())
+
+	source := newSourceRepo(t)
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	if err := r.SyncCache(ctx, source, cache, noCred); err != nil {
+		t.Fatalf("sync cache: %v", err)
+	}
+	git(t, cache, "update-ref", "refs/heads/syncerd/pr/7", sha)
+	git(t, cache, "update-ref", "refs/heads/syncerd/pr/8", sha)
+	git(t, cache, "update-ref", "refs/heads/feature", sha)
+
+	deleted, err := r.PrunePRBranches(ctx, cache, "syncerd/pr", map[string]bool{"syncerd/pr/7": true})
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1", deleted)
+	}
+
+	if _, err := r.run(ctx, cache, nil, "rev-parse", "--verify", "refs/heads/syncerd/pr/8"); err == nil {
+		t.Error("syncerd/pr/8 should have been deleted")
+	}
+	if _, err := r.run(ctx, cache, nil, "rev-parse", "--verify", "refs/heads/syncerd/pr/7"); err != nil {
+		t.Errorf("syncerd/pr/7 must survive: %v", err)
+	}
+	if _, err := r.run(ctx, cache, nil, "rev-parse", "--verify", "refs/heads/feature"); err != nil {
+		t.Errorf("a branch outside the prefix must survive: %v", err)
+	}
+}
+
+func TestPrunePRBranchesOnACacheWithNoPRBranches(t *testing.T) {
+	ctx := context.Background()
+	r := NewRunner(NewRedactor())
+
+	source := newSourceRepo(t)
+	cache := filepath.Join(t.TempDir(), "cache.git")
+	if err := r.SyncCache(ctx, source, cache, noCred); err != nil {
+		t.Fatalf("sync cache: %v", err)
+	}
+
+	deleted, err := r.PrunePRBranches(ctx, cache, "syncerd/pr", nil)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0", deleted)
+	}
+}
