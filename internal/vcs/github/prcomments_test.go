@@ -151,8 +151,10 @@ func TestCreateAndUpdateAndDeleteComment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if id != "551" {
-		t.Fatalf("id = %q, want 551", id)
+	// The id carries which space it belongs to: GitHub addresses
+	// discussion and review comments through different routes.
+	if id != "i:551" {
+		t.Fatalf("id = %q, want i:551", id)
 	}
 	if created["body"] != "hello" {
 		t.Errorf("created body = %v", created["body"])
@@ -193,8 +195,8 @@ func TestCreateReviewCommentSendsTheAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create review comment: %v", err)
 	}
-	if id != "777" {
-		t.Errorf("id = %q", id)
+	if id != "p:777" {
+		t.Errorf("id = %q, want the review comment space", id)
 	}
 	if payload["commit_id"] != "abc123" || payload["path"] != "internal/app.go" {
 		t.Errorf("anchor not sent: %+v", payload)
@@ -235,5 +237,57 @@ func TestConversationErrorsDoNotLeakTheToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "ghp_test_token") {
 		t.Errorf("error must not leak the token: %v", err)
+	}
+}
+
+func TestReviewCommentsAreUpdatedThroughTheirOwnRoute(t *testing.T) {
+	// A review comment id comes from /pulls/{n}/comments and is not valid
+	// in the /issues/comments space. Addressing it there 404s on every run
+	// after the first, or edits an unrelated comment if the ids collide.
+	var updatedVia, deletedVia string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/pulls/comments/777", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPatch:
+			updatedVia = r.URL.Path
+			writeJSON(w, map[string]any{"id": 777})
+		case http.MethodDelete:
+			deletedVia = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	mux.HandleFunc("/repos/acme/widget/issues/comments/777", func(http.ResponseWriter, *http.Request) {
+		t.Error("a review comment must not be addressed through the issues route")
+	})
+
+	p, _ := newProvider(t, mux)
+	if err := p.UpdateComment(context.Background(), "acme/widget", "p:777", "edited"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := p.DeleteComment(context.Background(), "acme/widget", "p:777"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if updatedVia == "" || deletedVia == "" {
+		t.Error("the review comment route was never reached")
+	}
+}
+
+func TestABareIDFromAnOlderStateFileIsADiscussionComment(t *testing.T) {
+	// Before the id carried its space, every id was a bare number minted by
+	// the issues route. An existing state file must keep working.
+	reached := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/issues/comments/551", func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		writeJSON(w, map[string]any{"id": 551})
+	})
+
+	p, _ := newProvider(t, mux)
+	if err := p.UpdateComment(context.Background(), "acme/widget", "551", "edited"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if !reached {
+		t.Error("a bare id must still resolve to the discussion route")
 	}
 }

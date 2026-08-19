@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -131,6 +132,30 @@ func (s *GitState) MarkPR(mirror, repoPath string, number int, rec PRRecord) {
 		s.PullRequests[mirror][repoPath] = make(map[int]PRRecord)
 	}
 	s.PullRequests[mirror][repoPath][number] = rec
+}
+
+// PRNumbers reports the source pull request numbers recorded for one
+// repository, so a caller can notice the ones a source listing no longer
+// mentions.
+func (s *GitState) PRNumbers(mirror, repoPath string) []int {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.PullRequests == nil {
+		return nil
+	}
+	byRepo, ok := s.PullRequests[mirror]
+	if !ok {
+		return nil
+	}
+	out := make([]int, 0, len(byRepo[repoPath]))
+	for number := range byRepo[repoPath] {
+		out = append(out, number)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // ForgetPR drops a record, so the next run re-inspects the destination.

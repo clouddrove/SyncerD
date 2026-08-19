@@ -768,3 +768,76 @@ func TestDestinationPullRequestsUseTheQualifiedRepositoryPath(t *testing.T) {
 		}
 	}
 }
+
+// failingWriter fails every create, standing in for a destination that
+// rejects the pull request pass while the branches mirror fine.
+type failingWriter struct{}
+
+func (failingWriter) FindPullRequest(context.Context, string, string) (vcs.PullRequest, bool, error) {
+	return vcs.PullRequest{}, false, nil
+}
+func (failingWriter) CreatePullRequest(context.Context, string, vcs.PullRequestSpec) (vcs.PullRequest, error) {
+	return vcs.PullRequest{}, errors.New("403 forbidden")
+}
+func (failingWriter) UpdatePullRequest(context.Context, string, int, vcs.PullRequestSpec) error {
+	return nil
+}
+func (failingWriter) ClosePullRequest(context.Context, string, int) error { return nil }
+
+func TestAFailedPullRequestPassIsRetriedOnTheNextRun(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha, BaseBranch: "main",
+	}}})
+	m.PullRequests.MirrorObjects = true
+	m.DestPRs = failingWriter{}
+
+	rep, _ := eng.Run(context.Background(), []Mirror{m})
+	if len(rep.Failures) != 1 || rep.Failures[0].Stage != "pr-objects" {
+		t.Fatalf("want one pr-objects failure, got %+v", rep.Failures)
+	}
+
+	// The fingerprint is the claim that the repository is fully mirrored.
+	// Recording it here would skip the repository next run and the failure
+	// would never be retried until an unrelated ref moved.
+	if _, ok := eng.opts.State.Get("fake", "acme/app"); ok {
+		t.Error("a repository whose pull request pass failed must not be recorded as done")
+	}
+
+	rep, _ = eng.Run(context.Background(), []Mirror{m})
+	if rep.Skipped != 0 {
+		t.Errorf("the repository must be retried, Skipped = %d", rep.Skipped)
+	}
+}
+
+func TestAnUnreachableForkHeadKeepsTheBranchAlreadyAtTheDestination(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+	lister := &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: forkSHA,
+		HeadRepoCloneURL: fork,
+	}}}
+	enablePRs(&m, lister)
+
+	if _, err := eng.Run(context.Background(), []Mirror{m}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if destRef(t, m, "refs/heads/syncerd/pr/7") == "" {
+		t.Fatal("the branch should exist after the first run")
+	}
+
+	// The fork becomes unreachable while the pull request is still open.
+	lister.prs[0].HeadRepoCloneURL = filepath.Join(t.TempDir(), "gone.git")
+
+	if _, err := eng.Run(context.Background(), []Mirror{m}); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if destRef(t, m, "refs/heads/syncerd/pr/7") == "" {
+		t.Error("one failed fetch must not delete a branch the destination already has")
+	}
+}
