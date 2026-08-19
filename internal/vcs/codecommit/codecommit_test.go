@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codecommit"
 	"github.com/aws/aws-sdk-go-v2/service/codecommit/types"
 
@@ -24,6 +25,22 @@ type fakeAPI struct {
 	updateFn func(ctx context.Context, in *codecommit.UpdateDefaultBranchInput) (*codecommit.UpdateDefaultBranchOutput, error)
 
 	createCalls int
+
+	listPRFn   func(ctx context.Context, in *codecommit.ListPullRequestsInput) (*codecommit.ListPullRequestsOutput, error)
+	getPRFn    func(ctx context.Context, in *codecommit.GetPullRequestInput) (*codecommit.GetPullRequestOutput, error)
+	createPRFn func(ctx context.Context, in *codecommit.CreatePullRequestInput) (*codecommit.CreatePullRequestOutput, error)
+	approvalFn func(ctx context.Context, in *codecommit.GetPullRequestApprovalStatesInput) (*codecommit.GetPullRequestApprovalStatesOutput, error)
+	commentsFn func(ctx context.Context, in *codecommit.GetCommentsForPullRequestInput) (*codecommit.GetCommentsForPullRequestOutput, error)
+	postFn     func(ctx context.Context, in *codecommit.PostCommentForPullRequestInput) (*codecommit.PostCommentForPullRequestOutput, error)
+
+	listPRCalls    int
+	getPRCalls     int
+	titleUpdates   []string
+	descUpdates    []string
+	statusUpdates  []string
+	commentUpdates []string
+	commentDeletes []string
+	posted         []*codecommit.PostCommentForPullRequestInput
 }
 
 func (f *fakeAPI) ListRepositories(ctx context.Context, in *codecommit.ListRepositoriesInput, _ ...func(*codecommit.Options)) (*codecommit.ListRepositoriesOutput, error) {
@@ -385,4 +402,96 @@ func TestNewRequiresRegion(t *testing.T) {
 	if _, err := New(Config{Name: "cc"}); err == nil {
 		t.Fatal("expected an error when region is empty, got nil")
 	}
+}
+
+// The pull request half of the api interface. Each method is a no-op
+// unless a test wires it up, so an existing repository test does not have
+// to know these exist.
+
+func (f *fakeAPI) ListPullRequests(ctx context.Context, in *codecommit.ListPullRequestsInput, _ ...func(*codecommit.Options)) (*codecommit.ListPullRequestsOutput, error) {
+	f.mu.Lock()
+	f.listPRCalls++
+	f.mu.Unlock()
+	if f.listPRFn == nil {
+		return &codecommit.ListPullRequestsOutput{}, nil
+	}
+	return f.listPRFn(ctx, in)
+}
+
+func (f *fakeAPI) GetPullRequest(ctx context.Context, in *codecommit.GetPullRequestInput, _ ...func(*codecommit.Options)) (*codecommit.GetPullRequestOutput, error) {
+	f.mu.Lock()
+	f.getPRCalls++
+	f.mu.Unlock()
+	if f.getPRFn == nil {
+		return &codecommit.GetPullRequestOutput{}, nil
+	}
+	return f.getPRFn(ctx, in)
+}
+
+func (f *fakeAPI) CreatePullRequest(ctx context.Context, in *codecommit.CreatePullRequestInput, _ ...func(*codecommit.Options)) (*codecommit.CreatePullRequestOutput, error) {
+	if f.createPRFn == nil {
+		return &codecommit.CreatePullRequestOutput{}, nil
+	}
+	return f.createPRFn(ctx, in)
+}
+
+func (f *fakeAPI) UpdatePullRequestTitle(ctx context.Context, in *codecommit.UpdatePullRequestTitleInput, _ ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestTitleOutput, error) {
+	f.mu.Lock()
+	f.titleUpdates = append(f.titleUpdates, aws.ToString(in.Title))
+	f.mu.Unlock()
+	return &codecommit.UpdatePullRequestTitleOutput{}, nil
+}
+
+func (f *fakeAPI) UpdatePullRequestDescription(ctx context.Context, in *codecommit.UpdatePullRequestDescriptionInput, _ ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestDescriptionOutput, error) {
+	f.mu.Lock()
+	f.descUpdates = append(f.descUpdates, aws.ToString(in.Description))
+	f.mu.Unlock()
+	return &codecommit.UpdatePullRequestDescriptionOutput{}, nil
+}
+
+func (f *fakeAPI) UpdatePullRequestStatus(ctx context.Context, in *codecommit.UpdatePullRequestStatusInput, _ ...func(*codecommit.Options)) (*codecommit.UpdatePullRequestStatusOutput, error) {
+	f.mu.Lock()
+	f.statusUpdates = append(f.statusUpdates, string(in.PullRequestStatus))
+	f.mu.Unlock()
+	return &codecommit.UpdatePullRequestStatusOutput{}, nil
+}
+
+func (f *fakeAPI) GetPullRequestApprovalStates(ctx context.Context, in *codecommit.GetPullRequestApprovalStatesInput, _ ...func(*codecommit.Options)) (*codecommit.GetPullRequestApprovalStatesOutput, error) {
+	if f.approvalFn == nil {
+		return &codecommit.GetPullRequestApprovalStatesOutput{}, nil
+	}
+	return f.approvalFn(ctx, in)
+}
+
+func (f *fakeAPI) GetCommentsForPullRequest(ctx context.Context, in *codecommit.GetCommentsForPullRequestInput, _ ...func(*codecommit.Options)) (*codecommit.GetCommentsForPullRequestOutput, error) {
+	if f.commentsFn == nil {
+		return &codecommit.GetCommentsForPullRequestOutput{}, nil
+	}
+	return f.commentsFn(ctx, in)
+}
+
+func (f *fakeAPI) PostCommentForPullRequest(ctx context.Context, in *codecommit.PostCommentForPullRequestInput, _ ...func(*codecommit.Options)) (*codecommit.PostCommentForPullRequestOutput, error) {
+	f.mu.Lock()
+	f.posted = append(f.posted, in)
+	f.mu.Unlock()
+	if f.postFn != nil {
+		return f.postFn(ctx, in)
+	}
+	return &codecommit.PostCommentForPullRequestOutput{
+		Comment: &types.Comment{CommentId: aws.String("c1")},
+	}, nil
+}
+
+func (f *fakeAPI) UpdateComment(ctx context.Context, in *codecommit.UpdateCommentInput, _ ...func(*codecommit.Options)) (*codecommit.UpdateCommentOutput, error) {
+	f.mu.Lock()
+	f.commentUpdates = append(f.commentUpdates, aws.ToString(in.CommentId))
+	f.mu.Unlock()
+	return &codecommit.UpdateCommentOutput{}, nil
+}
+
+func (f *fakeAPI) DeleteCommentContent(ctx context.Context, in *codecommit.DeleteCommentContentInput, _ ...func(*codecommit.Options)) (*codecommit.DeleteCommentContentOutput, error) {
+	f.mu.Lock()
+	f.commentDeletes = append(f.commentDeletes, aws.ToString(in.CommentId))
+	f.mu.Unlock()
+	return &codecommit.DeleteCommentContentOutput{}, nil
 }
