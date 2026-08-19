@@ -394,3 +394,27 @@ func TestPullRequestSwitchDefaults(t *testing.T) {
 		t.Error("an explicit false must win over the default")
 	}
 }
+
+func TestValidateGitSyncRejectsMalformedFilterPatterns(t *testing.T) {
+	// A malformed exclude used to be ignored entirely, so a repository
+	// somebody wrote a rule to keep out was mirrored to the destination.
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].Filters.Exclude = []string{"internal-[secret"}
+	cfg.Git.ApplyDefaults()
+
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("expected a malformed pattern error, got %v", err)
+	}
+}
+
+func TestValidateGitSyncAcceptsWellFormedFilterPatterns(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].Filters.Include = []string{"svc-*", "app-?"}
+	cfg.Git.Mirrors[0].Filters.Exclude = []string{"*-legacy"}
+	cfg.Git.ApplyDefaults()
+
+	if err := cfg.ValidateGitSync(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}

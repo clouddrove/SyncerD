@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/clouddrove/syncerd/internal/vcs"
@@ -360,6 +361,17 @@ func (c *Config) ValidateGitSync() error {
 		// A disabled block is not validated. Its fields have no effect,
 		// and rejecting a stale value in one would block a run that does
 		// not read it.
+		for _, pat := range m.Filters.Include {
+			if _, err := path.Match(pat, "probe"); err != nil {
+				return fmt.Errorf("git.mirrors[%d].filters.include pattern %q is malformed: %w", i, pat, err)
+			}
+		}
+		for _, pat := range m.Filters.Exclude {
+			if _, err := path.Match(pat, "probe"); err != nil {
+				return fmt.Errorf("git.mirrors[%d].filters.exclude pattern %q is malformed: %w; an exclude that cannot be parsed would otherwise be silently ignored", i, pat, err)
+			}
+		}
+
 		if m.PullRequests.MirrorObjects && !m.PullRequests.Enabled {
 			return fmt.Errorf("git.mirrors[%d].pull_requests.mirror_objects is set but enabled is not; the destination pull request needs the head branch that enabled mirrors", i)
 		}

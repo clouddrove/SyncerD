@@ -81,3 +81,10 @@ func TestFilterBadGlobDoesNotMatch(t *testing.T) {
 		t.Fatal("a malformed include pattern must not match")
 	}
 }
+
+func TestAMalformedExcludeDropsRatherThanMirrors(t *testing.T) {
+	f := Filter{Exclude: []string{"internal-[secret"}}
+	if f.Match(Repo{Name: "internal-secrets"}) {
+		t.Error("a pattern that cannot be parsed must not mirror the repository it was written to exclude")
+	}
+}
