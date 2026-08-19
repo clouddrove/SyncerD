@@ -154,6 +154,20 @@ func openPullRequest(t *testing.T, p *github.Provider, repoPath string) int {
 	return pr.Number
 }
 
+// relist reads the source pull requests again, as each run does, and
+// asserts how many are open.
+func relist(t *testing.T, p *github.Provider, repoPath string, want int) []vcs.PullRequest {
+	t.Helper()
+	prs, err := p.ListPullRequests(context.Background(), repoPath, vcs.PRListOptions{})
+	if err != nil {
+		t.Fatalf("list pull requests: %v", err)
+	}
+	if len(prs) != want {
+		t.Fatalf("got %d open pull requests, want %d", len(prs), want)
+	}
+	return prs
+}
+
 // TestGitHubToGitHubPullRequestRoundTrip mirrors a repository and its open
 // pull request to a second repository, against the real API.
 //
@@ -180,13 +194,7 @@ func TestGitHubToGitHubPullRequestRoundTrip(t *testing.T) {
 	t.Logf("source pull request %s#%d", srcPath, number)
 
 	// Read it back the way a run would.
-	prs, err := p.ListPullRequests(ctx, srcPath, vcs.PRListOptions{})
-	if err != nil {
-		t.Fatalf("list pull requests: %v", err)
-	}
-	if len(prs) != 1 {
-		t.Fatalf("got %d open pull requests, want 1", len(prs))
-	}
+	prs := relist(t, p, srcPath, 1)
 
 	// Mirror the branches first: a destination pull request cannot
 	// reference commits that have not arrived.
@@ -248,6 +256,7 @@ func TestGitHubToGitHubPullRequestRoundTrip(t *testing.T) {
 	}
 
 	// A second run must change nothing.
+	prs = relist(t, p, srcPath, 1)
 	res, err = prsync.Sync(ctx, prs, prsync.Options{
 		Mirror: "live", SourceRepo: srcPath, DestRepo: p.QualifiedPath(dstName),
 		BranchPrefix: "syncerd/pr", Source: p, Dest: p, SourceConv: p, DestConv: p,
@@ -260,13 +269,18 @@ func TestGitHubToGitHubPullRequestRoundTrip(t *testing.T) {
 		t.Errorf("a second run created %d pull requests; it must create none", res.Created)
 	}
 
-	// A comment at the source must reach the destination, and survive an
-	// edit without being duplicated.
+	// A comment at the source must reach the destination, exactly once.
 	commentID, err := p.CreateComment(ctx, srcPath, number, "a comment from the live test")
 	if err != nil {
 		t.Fatalf("comment at the source: %v", err)
 	}
 	t.Logf("source comment %s", commentID)
+
+	// Re-list, the way a run does. The engine reads the source afresh every
+	// time, and the watermark deliberately skips a pull request whose
+	// reported timestamp has not moved: reusing the list captured before
+	// the comment would test a situation that never occurs.
+	prs = relist(t, p, srcPath, 1)
 
 	res, err = prsync.Sync(ctx, prs, prsync.Options{
 		Mirror: "live", SourceRepo: srcPath, DestRepo: p.QualifiedPath(dstName),

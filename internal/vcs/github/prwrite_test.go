@@ -181,3 +181,30 @@ func TestReopenPullRequest(t *testing.T) {
 		t.Errorf("state = %v, want open", payload["state"])
 	}
 }
+
+func TestClearingLabelsSendsAnEmptyArrayNotNull(t *testing.T) {
+	// A source pull request with no labels is the common case. A nil slice
+	// marshals to null, which GitHub rejects with 422, and that failed the
+	// whole pull request rather than just its labels.
+	var raw map[string]json.RawMessage
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/pulls/12", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"number": 12})
+	})
+	mux.HandleFunc("/repos/acme/widget/issues/12/labels", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		writeJSON(w, []map[string]any{})
+	})
+
+	p, _ := newProvider(t, mux)
+	err := p.UpdatePullRequest(context.Background(), "acme/widget", 12, vcs.PullRequestSpec{
+		Title: "Add login", BaseBranch: "main", SyncLabels: true, Labels: nil,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := string(raw["labels"]); got != "[]" {
+		t.Errorf("labels = %s, want an empty array", got)
+	}
+}
