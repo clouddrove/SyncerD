@@ -313,3 +313,41 @@ func TestBuildMirrorsLeavesPullRequestsOffByDefault(t *testing.T) {
 		t.Error("a mirror with no pull_requests block must not wire a lister")
 	}
 }
+
+func TestBuildMirrorsWiresPullRequestObjects(t *testing.T) {
+	cfg := buildableConfig()
+	// GitHub on both ends: the only pair that can write pull requests today.
+	cfg.Mirrors[0].Destination = "gh2"
+	cfg.Providers = append(cfg.Providers, config.GitProviderConfig{
+		Name: "gh2", Type: "github", Owner: "mirror", Token: "ghp_token_value_two",
+	})
+	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true, MirrorObjects: true}
+
+	mirrors, _, err := BuildMirrors(cfg)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	m := mirrors[0]
+	if !m.PullRequests.MirrorObjects {
+		t.Error("MirrorObjects was not carried through")
+	}
+	if m.DestPRs == nil {
+		t.Error("a GitHub destination must be wired as a pull request writer")
+	}
+	if m.SourceConv == nil || m.DestConv == nil {
+		t.Error("conversation endpoints must be wired when comments default on")
+	}
+	if !m.PullRequests.Comments || !m.PullRequests.Reviews || !m.PullRequests.Labels {
+		t.Errorf("switches = %+v", m.PullRequests)
+	}
+}
+
+func TestBuildMirrorsRejectsADestinationThatCannotWritePullRequests(t *testing.T) {
+	cfg := buildableConfig()
+	cfg.Mirrors[0].PullRequests = config.PullRequestsConfig{Enabled: true, MirrorObjects: true}
+
+	_, _, err := BuildMirrors(cfg)
+	if err == nil || !strings.Contains(err.Error(), "mirror_objects") {
+		t.Fatalf("a GitLab destination cannot write pull requests yet, want that error, got %v", err)
+	}
+}

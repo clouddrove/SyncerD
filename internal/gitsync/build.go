@@ -148,6 +148,29 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 			}
 		}
 
+		// Mirroring the objects needs a destination that can write them,
+		// and, when the conversation is included, both sides able to read
+		// and write comments. Refusing here beats a run that quietly
+		// mirrors branches and calls it done.
+		var destPRs vcs.PullRequestWriter
+		var sourceConv, destConv vcs.PullRequestConversation
+		if mc.PullRequests.MirrorObjects {
+			destPRs, ok = dst.(vcs.PullRequestWriter)
+			if !ok {
+				return nil, nil, fmt.Errorf("mirror %q: pull_requests.mirror_objects is set but destination provider %q (type %q) cannot write pull requests; GitHub is supported today and the remaining provider types arrive in a later release", mc.Name, mc.Destination, dst.Type())
+			}
+			if mc.PullRequests.CommentsOrDefault() || mc.PullRequests.ReviewsOrDefault() {
+				sourceConv, ok = src.(vcs.PullRequestConversation)
+				if !ok {
+					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but source provider %q (type %q) cannot read them; set comments: false and reviews: false, or wait for that provider", mc.Name, mc.Source, src.Type())
+				}
+				destConv, ok = dst.(vcs.PullRequestConversation)
+				if !ok {
+					return nil, nil, fmt.Errorf("mirror %q: pull request comments are enabled but destination provider %q (type %q) cannot write them; set comments: false and reviews: false, or wait for that provider", mc.Name, mc.Destination, dst.Type())
+				}
+			}
+		}
+
 		mirrors = append(mirrors, Mirror{
 			Name:         mc.Name,
 			Source:       lister,
@@ -166,9 +189,16 @@ func BuildMirrors(cfg *config.GitConfig) ([]Mirror, *Redactor, error) {
 			CreateMissing: mc.CreateMissingOrDefault(),
 			Visibility:    mc.Visibility,
 			SourcePRs:     sourcePRs,
+			DestPRs:       destPRs,
+			SourceConv:    sourceConv,
+			DestConv:      destConv,
 			PullRequests: PRSyncConfig{
-				Enabled:      mc.PullRequests.Enabled,
-				BranchPrefix: mc.PullRequests.BranchPrefixOrDefault(),
+				Enabled:       mc.PullRequests.Enabled,
+				BranchPrefix:  mc.PullRequests.BranchPrefixOrDefault(),
+				MirrorObjects: mc.PullRequests.MirrorObjects,
+				Comments:      mc.PullRequests.CommentsOrDefault(),
+				Reviews:       mc.PullRequests.ReviewsOrDefault(),
+				Labels:        mc.PullRequests.LabelsOrDefault(),
 			},
 		})
 	}

@@ -363,3 +363,34 @@ func TestBranchPrefixOrDefault(t *testing.T) {
 		t.Errorf("BranchPrefixOrDefault = %q, want mirrored/pr", got)
 	}
 }
+
+func TestValidateGitSyncRejectsMirrorObjectsWithoutEnabled(t *testing.T) {
+	cfg := &Config{Git: validGit()}
+	cfg.Git.Mirrors[0].PullRequests = PullRequestsConfig{MirrorObjects: true}
+	cfg.Git.ApplyDefaults()
+	err := cfg.ValidateGitSync()
+	if err == nil || !strings.Contains(err.Error(), "mirror_objects") {
+		t.Fatalf("expected a mirror_objects error, got %v", err)
+	}
+}
+
+func TestPullRequestSwitchDefaults(t *testing.T) {
+	off := PullRequestsConfig{Enabled: true}
+	if off.CommentsOrDefault() || off.ReviewsOrDefault() {
+		t.Error("comments and reviews follow mirror_objects, which is off here")
+	}
+	if !off.LabelsOrDefault() {
+		t.Error("labels default on")
+	}
+
+	on := PullRequestsConfig{Enabled: true, MirrorObjects: true}
+	if !on.CommentsOrDefault() || !on.ReviewsOrDefault() {
+		t.Error("comments and reviews default on once objects are mirrored")
+	}
+
+	no := false
+	explicit := PullRequestsConfig{Enabled: true, MirrorObjects: true, Comments: &no, Reviews: &no, Labels: &no}
+	if explicit.CommentsOrDefault() || explicit.ReviewsOrDefault() || explicit.LabelsOrDefault() {
+		t.Error("an explicit false must win over the default")
+	}
+}

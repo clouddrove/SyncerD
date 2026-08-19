@@ -648,3 +648,54 @@ func TestPullRequestsDisabledMakesNoListingCall(t *testing.T) {
 		t.Fatalf("a disabled block must not list pull requests: %+v", rep.Failures)
 	}
 }
+
+func TestMirrorObjectsGivesEverySourcePullRequestABranch(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	// A pull request whose head is a branch of the source repository. With
+	// mirror_objects on it gets a syncerd/pr branch too, so a destination
+	// pull request has one uniform head name to point at.
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 8, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha,
+	}}})
+	m.PullRequests.MirrorObjects = true
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/8"); got != sha {
+		t.Errorf("destination refs/heads/syncerd/pr/8 = %q, want %q", got, sha)
+	}
+	if rep.Mirrored[0].PRBranchesPushed != 1 {
+		t.Errorf("PRBranchesPushed = %d, want 1", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+func TestWithoutMirrorObjectsASameRepoPullRequestStillGetsNoBranch(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 8, State: vcs.PROpen, HeadBranch: "main", HeadSHA: sha,
+	}}})
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/8"); got != "" {
+		t.Errorf("P1 behaviour must be unchanged when mirror_objects is off, got %q", got)
+	}
+	if rep.Mirrored[0].PRBranchesPushed != 0 {
+		t.Errorf("PRBranchesPushed = %d, want 0", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
