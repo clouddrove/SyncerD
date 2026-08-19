@@ -314,7 +314,7 @@ Override with `SYNCERD_` prefix:
 
 ## Git mirroring
 
-`syncerd git-sync` mirrors git repositories between hosting providers, replicating branches and tags as a full mirror in either direction. All five provider types are supported: GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, and any of them can be a source or a destination.
+`syncerd git-sync` mirrors git repositories between hosting providers, replicating branches, tags, and optionally the heads of open pull requests as a full mirror in either direction. All five provider types are supported: GitHub, GitLab, Bitbucket, Azure DevOps, and AWS CodeCommit, and any of them can be a source or a destination.
 
 **Providers:**
 
@@ -377,6 +377,8 @@ export SYNCERD_GIT_GL_TOKEN=your-gitlab-token
 | `fast-forward` | Refuses any non fast-forward update and reports it as a failure |
 
 **Adopt guard:** a mirror refuses to push to a destination that already has content and no prior mirror state, so a misconfigured mirror cannot silently overwrite existing work; set `adopt: true` on the mirror to opt in once you've confirmed the destination is right.
+
+**Pull request heads (opt in):** set `pull_requests.enabled: true` on a mirror and the commits behind each open pull request opened from a **fork** are pushed to the destination as a branch, default `syncerd/pr/<number>`. Without it those commits reach the destination nowhere, since a fork pull request has no branch in the source repository. A pull request opened from a source branch already mirrors under its own name and gets no second copy. The pull request itself is not recreated at the destination yet. Off by default because a fork head is third-party code, and a destination that builds on branch push would run it: read the security note in [docs/git-sync-runbook.md](docs/git-sync-runbook.md#mirroring-pull-request-heads) before enabling it.
 
 Run with `--dry-run` to print the ref changes each mirror would make, per repository, without creating, pushing, or deleting anything.
 

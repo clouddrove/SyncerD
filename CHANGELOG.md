@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `git-sync` can mirror the commits behind open pull requests. A pull request opened from a fork has no branch in the source repository, so its commits previously reached no destination at all; with `pull_requests.enabled` on a mirror, the head is pushed as an ordinary branch under `branch_prefix` (default `syncerd/pr/<number>`), and the default mirror push mode prunes it once the pull request closes. A head that lives in the source repository already arrives with the ordinary branch mirror and gets no second copy. A repository whose own branches sit under the prefix is refused rather than silently overwritten, and one unreachable fork head is a warning rather than a failed repository. Off by default: a fork head is third party code, and a destination that builds on branch push would run it. GitHub sources only for now; the pull request objects themselves are not recreated at the destination yet
+
 ### Fixed
 - `git-sync` discovered only the public repositories of a GitHub personal account. The listing fell back to `GET /users/{owner}/repos` when the owner was not an organisation, and that endpoint returns public repositories only, whatever token is presented, so private repositories were silently missing from every run with no error to point at. When the token belongs to the configured owner, SyncerD now lists through `GET /user/repos?visibility=all&affiliation=owner`, which reports private repositories. Mirroring another account still sees its public repositories only, since no credential can see further
 - `git-sync` failed outright at the `discover` stage when a GitLab source was a user namespace rather than a group: only `GET /groups/{owner}/projects` was tried, and it 404s for a personal namespace. A 404 on the first page now falls back to `GET /users/{owner}/projects`, which lists private projects the token can see

@@ -2,8 +2,10 @@ package gitsync
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -427,5 +429,222 @@ func TestEngineConcurrentReposDoNotRaceOnState(t *testing.T) {
 		if _, ok := eng.opts.State.Get(m.Name, r.Path); !ok {
 			t.Errorf("state missing entry for %s", r.Path)
 		}
+	}
+}
+
+// fakePRLister returns a fixed pull request list, or an error.
+type fakePRLister struct {
+	prs []vcs.PullRequest
+	err error
+}
+
+func (f *fakePRLister) ListPullRequests(context.Context, string, vcs.PRListOptions) ([]vcs.PullRequest, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.prs, nil
+}
+
+// enablePRs turns pull request mirroring on for a fixture mirror.
+func enablePRs(m *Mirror, lister vcs.PullRequestLister) {
+	m.SourcePRs = lister
+	m.PullRequests = PRSyncConfig{Enabled: true, BranchPrefix: "syncerd/pr"}
+}
+
+// destRef reads a ref from the destination bare repository the fixture
+// mirrors into, returning the empty string when the ref does not exist.
+func destRef(t *testing.T, m Mirror, ref string) string {
+	t.Helper()
+	dir := m.Dest.CloneURL("app")
+	out, err := NewRunner(nil).run(context.Background(), dir, nil, "rev-parse", "--verify", ref)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+func TestForkPullRequestHeadBecomesADestinationBranch(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: forkSHA,
+		HeadRepoCloneURL: fork,
+	}}})
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/7"); got != forkSHA {
+		t.Errorf("destination refs/heads/syncerd/pr/7 = %q, want %q", got, forkSHA)
+	}
+	if rep.Mirrored[0].PRBranchesPushed != 1 {
+		t.Errorf("PRBranchesPushed = %d, want 1", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+func TestSameRepositoryPullRequestGetsNoSyntheticBranch(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 8, State: vcs.PROpen, HeadBranch: "main", HeadSHA: "irrelevant",
+	}}})
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/8"); got != "" {
+		t.Errorf("a head living in the source repository must not get a second copy, got %q", got)
+	}
+	if rep.Mirrored[0].PRBranchesPushed != 0 {
+		t.Errorf("PRBranchesPushed = %d, want 0", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+func TestNewPullRequestDefeatsTheUnchangedSkip(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+	ctx := context.Background()
+
+	lister := &fakePRLister{}
+	enablePRs(&m, lister)
+
+	if _, err := eng.Run(ctx, []Mirror{m}); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// No branch or tag changes at the source, only a new pull request
+	// opened from a fork.
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+	lister.prs = []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: forkSHA,
+		HeadRepoCloneURL: fork,
+	}}
+
+	rep, err := eng.Run(ctx, []Mirror{m})
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if rep.Skipped != 0 {
+		t.Fatalf("a repository with a new pull request must not be skipped, Skipped = %d", rep.Skipped)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/7"); got != forkSHA {
+		t.Errorf("destination refs/heads/syncerd/pr/7 = %q, want %q", got, forkSHA)
+	}
+}
+
+func TestClosedPullRequestBranchIsPrunedFromTheDestination(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+	ctx := context.Background()
+
+	fork := newForkRepo(t, "feature", "one")
+	forkSHA := strings.TrimSpace(git(t, fork, "rev-parse", "refs/heads/feature"))
+	lister := &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: forkSHA,
+		HeadRepoCloneURL: fork,
+	}}}
+	enablePRs(&m, lister)
+
+	if _, err := eng.Run(ctx, []Mirror{m}); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/7"); got == "" {
+		t.Fatal("the branch should exist after the first run")
+	}
+
+	// The pull request closes, so the source stops listing it.
+	lister.prs = nil
+
+	if _, err := eng.Run(ctx, []Mirror{m}); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := destRef(t, m, "refs/heads/syncerd/pr/7"); got != "" {
+		t.Errorf("a closed pull request's branch must be pruned, still at %q", got)
+	}
+}
+
+func TestSourceBranchUnderThePrefixFailsTheRepository(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	source := m.SourceRemote.CloneURL("acme/app")
+	sha := strings.TrimSpace(git(t, source, "rev-parse", "refs/heads/main"))
+	git(t, source, "update-ref", "refs/heads/syncerd/pr/1", sha)
+
+	enablePRs(&m, &fakePRLister{})
+
+	rep, _ := eng.Run(context.Background(), []Mirror{m})
+	if len(rep.Failures) != 1 {
+		t.Fatalf("got %d failures, want 1: %+v", len(rep.Failures), rep.Failures)
+	}
+	if rep.Failures[0].Stage != "pull-requests" {
+		t.Errorf("Stage = %q, want pull-requests", rep.Failures[0].Stage)
+	}
+	if !strings.Contains(rep.Failures[0].Error, "branch_prefix") {
+		t.Errorf("the error should name branch_prefix, got %q", rep.Failures[0].Error)
+	}
+}
+
+func TestUnreachableForkHeadWarnsAndContinues(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	enablePRs(&m, &fakePRLister{prs: []vcs.PullRequest{{
+		Number: 7, State: vcs.PROpen, HeadBranch: "feature", HeadSHA: "aaa",
+		HeadRepoCloneURL: filepath.Join(t.TempDir(), "deleted-fork.git"),
+	}}})
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("one unreachable fork must not fail the run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", rep.Failures)
+	}
+	if len(rep.Mirrored) != 1 {
+		t.Fatalf("the repository's branches should still mirror: %+v", rep.Mirrored)
+	}
+	if rep.Mirrored[0].PRBranchesPushed != 0 {
+		t.Errorf("PRBranchesPushed = %d, want 0", rep.Mirrored[0].PRBranchesPushed)
+	}
+}
+
+func TestPullRequestListingFailureFailsAtThePullRequestsStage(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	enablePRs(&m, &fakePRLister{err: errors.New("github: 403 rate limited")})
+
+	rep, _ := eng.Run(context.Background(), []Mirror{m})
+	if len(rep.Failures) != 1 {
+		t.Fatalf("got %d failures, want 1: %+v", len(rep.Failures), rep.Failures)
+	}
+	if rep.Failures[0].Stage != "pull-requests" {
+		t.Errorf("Stage = %q, want pull-requests", rep.Failures[0].Stage)
+	}
+	if len(rep.Mirrored) != 0 {
+		t.Errorf("a failed listing must not report the repository as mirrored: %+v", rep.Mirrored)
+	}
+}
+
+func TestPullRequestsDisabledMakesNoListingCall(t *testing.T) {
+	eng, m, _ := newEngineFixture(t)
+
+	// SourcePRs is wired but the block is off, which is what BuildMirrors
+	// produces for a mirror with no pull_requests configured.
+	m.SourcePRs = &fakePRLister{err: errors.New("must not be called")}
+
+	rep, err := eng.Run(context.Background(), []Mirror{m})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(rep.Failures) != 0 {
+		t.Fatalf("a disabled block must not list pull requests: %+v", rep.Failures)
 	}
 }

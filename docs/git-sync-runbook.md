@@ -591,9 +591,57 @@ falls back to `GET /users/{owner}/projects`.
 no bundled git; install git 2.30 or newer on any host that runs a release
 binary. The Docker image installs it for you.
 
-**Only branches and tags are mirrored.** Not issues, pull requests, wikis,
-releases, or Git LFS objects. A repository using LFS mirrors its pointers, not
-its objects.
+**Branches, tags, and optionally pull request heads are mirrored.** Not issues,
+pull request discussions, wikis, releases, or Git LFS objects. A repository
+using LFS mirrors its pointers, not its objects. With `pull_requests.enabled`
+set on a mirror, the commits behind each open pull request opened from a fork
+are pushed as a branch; see Mirroring pull request heads above.
+
+---
+
+## Mirroring pull request heads
+
+```yaml
+git:
+  mirrors:
+    - name: gh-to-gl
+      source: gh
+      destination: gl
+      pull_requests:
+        enabled: true             # default false
+        branch_prefix: syncerd/pr # default
+        states: [open]            # default, and the only accepted value today
+```
+
+A pull request opened from a branch of the source repository needs nothing: its
+commits already arrive with the ordinary branch mirror, under their own branch
+name. A pull request opened from a **fork** has no branch in the source
+repository, so its commits reach the destination only with this setting on, as
+`refs/heads/<branch_prefix>/<number>`.
+
+Under the default `mirror` push mode the branch disappears from the destination
+on the first run after the pull request closes: the source stops listing it, and
+prune removes what the source no longer has.
+
+The pull request object itself, its title, discussion, and reviews, is not
+recreated at the destination. Only the commits are.
+
+**Read this before enabling it.** A fork pull request head is code written by
+anyone who can open a pull request against the source. Turning this on pushes
+that code to a destination branch, where it arrives as an ordinary push from a
+trusted mirror rather than as a fork pull request. If destination CI builds on
+branch push, it will run that code with whatever credentials that CI holds, and
+none of the source's fork pull request protections apply. Restrict destination
+CI to the branches your team actually builds and exclude the `branch_prefix`
+namespace. It is one contiguous namespace so a single glob covers it.
+
+A repository whose own branches live under `branch_prefix` is refused with an
+error naming the branch, because mirroring both would have the two overwrite
+each other on every run. Change `branch_prefix` for that mirror, or exclude the
+repository.
+
+Only GitHub sources can list pull requests today. A mirror that enables
+`pull_requests` with any other source type is rejected at startup.
 
 ---
 

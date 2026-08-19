@@ -408,3 +408,63 @@ func urlConfigBase(raw string) string {
 	}
 	return u.Scheme + "://" + u.Host + "/"
 }
+
+// FetchPRHead fetches one pull request head into the cache as an ordinary
+// branch under refs/heads.
+//
+// remoteURL is the repository the head actually lives in, which for a fork
+// pull request is the fork itself, and headRef is the ref to read there.
+// The result lands as refs/heads/<branch>, so the existing push refspecs
+// carry it to the destination and mirror mode's prune removes it once it
+// stops being fetched. No remote is added for the fork: the URL is passed
+// to fetch directly, so nothing is written into the cache's config that
+// would outlive this call.
+//
+// The refspec is forced, because a rebased or amended pull request head is
+// an ordinary event and its new commit is frequently not a descendant of
+// the one before it.
+func (r *Runner) FetchPRHead(ctx context.Context, dir, remoteURL, headRef, branch string, cred vcs.GitCredential) error {
+	if err := rejectURLCredentials(remoteURL); err != nil {
+		return err
+	}
+	if err := validateCredential(cred); err != nil {
+		return err
+	}
+	spec := fmt.Sprintf("+%s:refs/heads/%s", headRef, branch)
+	if _, err := r.run(ctx, dir, credEnv(cred, remoteURL), "fetch", "--no-tags", remoteURL, spec); err != nil {
+		return fmt.Errorf("fetch pull request head %s: %w", headRef, err)
+	}
+	return nil
+}
+
+// PrunePRBranches deletes cache branches under prefix that are no longer
+// wanted, returning how many it deleted. keep holds branch names relative
+// to refs/heads, as produced by vcs.PRBranch.
+//
+// These branches are not tracked by the origin refspec, so the cache's own
+// fetch --prune never removes them. Without this, the branch of a merged
+// pull request would live in the cache forever and be pushed to the
+// destination on every run.
+func (r *Runner) PrunePRBranches(ctx context.Context, dir, prefix string, keep map[string]bool) (int, error) {
+	out, err := r.run(ctx, dir, nil, "for-each-ref", "--format=%(refname)", "refs/heads/"+prefix+"/")
+	if err != nil {
+		return 0, fmt.Errorf("list pull request branches: %w", err)
+	}
+
+	deleted := 0
+	for _, line := range strings.Split(out, "\n") {
+		ref := strings.TrimSpace(line)
+		if ref == "" {
+			continue
+		}
+		branch := strings.TrimPrefix(ref, "refs/heads/")
+		if keep[branch] {
+			continue
+		}
+		if _, err := r.run(ctx, dir, nil, "update-ref", "-d", ref); err != nil {
+			return deleted, fmt.Errorf("delete stale pull request branch %s: %w", branch, err)
+		}
+		deleted++
+	}
+	return deleted, nil
+}
