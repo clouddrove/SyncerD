@@ -1,0 +1,17 @@
+source:
+  type: dockerhub
+  registry: docker.io
+
+destinations:
+  - name: my-ecr
+    type: ecr
+    registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+    region: us-east-1
+  - name: my-ghcr
+    type: ghcr
+    registry: ghcr.io/github-username
+
+images:
+  - name: library/busybox
+    tags:
+      - "1.36"

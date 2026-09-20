@@ -1,0 +1,37 @@
+name: Mirror GitHub to GitLab
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render SyncerD configuration
+        env:
+          GITHUB_OWNER: ${{ vars.GITHUB_OWNER }}
+          GITLAB_GROUP: ${{ vars.GITLAB_GROUP }}
+        run: |
+          sed \
+            -e "s|<github-owner>|$GITHUB_OWNER|g" \
+            -e "s|<gitlab-group>|$GITLAB_GROUP|g" \
+            examples/git-sync/github-to-gitlab/github-to-gitlab.yml \
+            > .syncerd-github-to-gitlab.yaml
+
+      - name: Mirror GitHub repositories to GitLab
+        uses: clouddrove/syncerd@v0.2.2
+        with:
+          command: git-sync
+          config: .syncerd-github-to-gitlab.yaml
+          once: "true"
+          dry-run: "true"
+        env:
+          SYNCERD_GIT_GITHUB_SOURCE_TOKEN: ${{ secrets.SYNCERD_GITHUB_SOURCE_TOKEN }}
+          SYNCERD_GIT_GITLAB_DESTINATION_TOKEN: ${{ secrets.SYNCERD_GITLAB_DESTINATION_TOKEN }}

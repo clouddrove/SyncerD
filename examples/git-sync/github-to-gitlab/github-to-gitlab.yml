@@ -1,0 +1,27 @@
+# Set the GitHub owner and GitLab group before using this configuration.
+
+git:
+  providers:
+    - name: github-source
+      type: github
+      owner: <github-owner>
+    - name: gitlab-destination
+      type: gitlab
+      owner: <gitlab-group>
+
+  mirrors:
+    - name: github-to-gitlab
+      source: github-source
+      destination: gitlab-destination
+      filters:
+        include:
+          - syncerd-example-*
+        skip_archived: true
+        skip_forks: true
+      create_missing: true
+      visibility: private
+      push_mode: mirror
+
+  work_dir: .syncerd-git-cache
+  state_path: .syncerd-git-cache/git-state.json
+  concurrency: 2

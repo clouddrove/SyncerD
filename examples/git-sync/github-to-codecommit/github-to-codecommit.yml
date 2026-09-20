@@ -1,0 +1,21 @@
+git:
+  providers:
+    - name: github
+      type: github
+      owner: <github-owner>
+
+    - name: codecommit
+      type: codecommit
+      region: us-east-1
+
+  mirrors:
+    - name: github-to-codecommit
+      source: github
+      destination: codecommit
+      filters:
+        include:
+          - SyncerD
+      create_missing: true
+
+  work_dir: ./syncerd-git-cache
+  state_path: ./syncerd-git-cache/git-state.json

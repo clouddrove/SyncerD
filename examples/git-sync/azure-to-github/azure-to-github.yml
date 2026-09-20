@@ -1,0 +1,23 @@
+git:
+  providers:
+    - name: source
+      type: azuredevops
+      owner: <azure-devops-org>
+      project: testing
+
+    - name: destination
+      type: github
+      owner: <github-owner>
+
+  mirrors:
+    - name: azure-to-github
+      source: source
+      destination: destination
+      repositories:
+        - source: SyncerD-Azure-Source
+          destination: SyncerD-GitHub-Destination
+      create_missing: true
+      adopt: true
+
+  work_dir: ./syncerd-git-cache
+  state_path: ./syncerd-git-cache/git-state.json
