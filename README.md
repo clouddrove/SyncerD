@@ -431,5 +431,5 @@ time() - syncerd_last_success_unixtime{command="git-sync"} > 86400
 
 ## License
 
-[MIT](LICENSE). Built with [go-containerregistry](https://github.com/google/go-containerregistry).
+[MIT](LICENSE). SyncerD is built and maintained by [CloudDrove](https://clouddrove.com); see the [SyncerD product page](https://clouddrove.com/syncerd) and the rest of [CloudDrove's open-source Terraform modules and DevOps tools](https://clouddrove.com/open-source). Built with [go-containerregistry](https://github.com/google/go-containerregistry).
 Inspired by the need to work around Docker Hub rate limits.
